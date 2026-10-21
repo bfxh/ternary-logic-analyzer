@@ -68,6 +68,11 @@ impl Expr {
         Self::Equiv(Box::new(a), Box::new(b))
     }
 
+    /// 是否为常量 `Unknown`。
+    pub const fn is_unknown_const(&self) -> bool {
+        matches!(self, Self::Const(crate::value::Ternary::Unknown))
+    }
+
     /// 收集表达式中出现的全部变量名（保持首次出现顺序）。
     pub fn variables(&self) -> Vec<String> {
         let mut out = Vec::new();

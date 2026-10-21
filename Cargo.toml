@@ -1,13 +1,22 @@
 [workspace]
 resolver = "3"
-members = ["crates/tla-core", "crates/tla-cli"]
+members = [
+    "crates/trit-core",
+    "crates/trit-eval",
+    "crates/trit-sat",
+    "crates/trit-circuit",
+    "crates/trit-cli",
+]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bfxh/ternary-logic-analyzer"
+repository = "https://github.com/bfxh/trit"
 
 [workspace.dependencies]
-tla-core = { path = "crates/tla-core", version = "0.1.0" }
+trit-core = { path = "crates/trit-core", version = "0.2.0" }
+trit-eval = { path = "crates/trit-eval", version = "0.2.0" }
+trit-sat = { path = "crates/trit-sat", version = "0.2.0" }
+trit-circuit = { path = "crates/trit-circuit", version = "0.2.0" }

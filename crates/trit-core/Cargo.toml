@@ -1,0 +1,12 @@
+[package]
+name = "trit-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值逻辑核心：Kleene / Łukasiewicz / Bochvar 语义、AST、解析器、位并行表示与二进制互操作"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"

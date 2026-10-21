@@ -2,9 +2,9 @@
 
 use std::fmt::Write as _;
 
-use tla_core::bits::TruthTable;
-use tla_core::eval::decode_assignment;
-use tla_core::value::Ternary;
+use trit_core::bits::TruthTable;
+use trit_core::value::Ternary;
+use trit_eval::eval::decode_assignment;
 
 /// 输出格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -196,12 +196,12 @@ pub fn display_width(s: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tla_core::algebra::Algebra;
-    use tla_core::parser::Parser;
+    use trit_core::algebra::Algebra;
+    use trit_core::parser::Parser;
 
     fn sample() -> TruthTable {
         let e = Parser::parse("a & b").unwrap();
-        tla_core::eval::truth_table(&e, Algebra::Kleene)
+        trit_eval::eval::truth_table(&e, Algebra::Kleene)
     }
 
     #[test]

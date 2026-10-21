@@ -2,11 +2,11 @@
 //! 以及三值代数的基本性质。
 
 use proptest::prelude::*;
-use tla_core::algebra::Algebra;
-use tla_core::bits::TriBit;
-use tla_core::eval::{Assignment, decode_assignment, eval, truth_table};
-use tla_core::parser::Parser;
-use tla_core::value::Ternary;
+use trit_core::algebra::Algebra;
+use trit_core::bits::TriBit;
+use trit_core::parser::Parser;
+use trit_core::value::Ternary;
+use trit_eval::eval::{Assignment, decode_assignment, eval, truth_table};
 
 /// 生成一个三值。
 fn arb_ternary() -> impl Strategy<Value = Ternary> {
@@ -100,7 +100,7 @@ proptest! {
     #[test]
     fn simplify_preserves_semantics(a in arb_ternary(), b in arb_ternary(), alg_s in arb_algebra()) {
         let expr = Parser::parse("a & b | a & !b").unwrap();
-        let simplified = tla_core::simplify::simplify(&expr, alg_s);
+        let simplified = trit_eval::simplify::simplify(&expr, alg_s);
         let mut asg = Assignment::new();
         asg.set("a", a).set("b", b);
         prop_assert_eq!(eval(&expr, &asg, alg_s), eval(&simplified, &asg, alg_s));
@@ -122,10 +122,10 @@ proptest! {
     fn equivalence_matches_truth_table(alg_s in arb_algebra()) {
         let e1 = Parser::parse("a & b").unwrap();
         let e2 = Parser::parse("b & a").unwrap();
-        let r = tla_core::eval::equivalent(&e1, &e2, alg_s);
+        let r = trit_eval::eval::equivalent(&e1, &e2, alg_s);
         prop_assert!(r.equivalent);
         let e3 = Parser::parse("a & !a").unwrap();
-        let r2 = tla_core::eval::equivalent(&e1, &e3, alg_s);
+        let r2 = trit_eval::eval::equivalent(&e1, &e3, alg_s);
         prop_assert!(!r2.equivalent);
     }
 }

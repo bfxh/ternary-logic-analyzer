@@ -1,23 +1,24 @@
 [package]
-name = "tla-cli"
+name = "trit-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "三值逻辑分析器的命令行界面：求值、真值表、等价判定、化简与网表分析"
+description = "trit 命令行：求值、真值表、等价判定、化简与网表分析"
 
 [[bin]]
-name = "tla"
+name = "trit"
 path = "src/main.rs"
 
 [dependencies]
-tla-core.workspace = true
+trit-core.workspace = true
+trit-eval.workspace = true
+trit-sat.workspace = true
+trit-circuit.workspace = true
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
-serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
 [dev-dependencies]
-proptest = "1.12.0"
 serde_json = "1.0.154"

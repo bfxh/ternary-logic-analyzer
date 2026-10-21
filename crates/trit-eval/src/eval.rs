@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
-use crate::algebra::Algebra;
-use crate::ast::Expr;
-use crate::bits::{Evaluator, TriBit, TruthTable};
-use crate::value::Ternary;
+use trit_core::algebra::Algebra;
+use trit_core::ast::Expr;
+use trit_core::bits::{Evaluator, TriBit, TruthTable};
+use trit_core::value::Ternary;
 
 /// 变量赋值：一组 `变量名 → 取值`。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -205,7 +205,7 @@ pub fn decode_assignment(index: u64, vars: &[String]) -> Assignment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Parser;
+    use trit_core::parser::Parser;
 
     #[test]
     fn eval_single_assignment() {

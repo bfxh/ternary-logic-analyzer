@@ -49,6 +49,30 @@ pub struct TriBit {
 }
 
 impl TriBit {
+    /// 从二进制平面构造：`ones` 的位就是 `True`，`unknowns = 0`。
+    ///
+    /// 这是二进制与三值之间的零开销桥：不复制、不分配。
+    pub const fn from_binary(ones: u64) -> Self {
+        Self {
+            ones: BitPlane(ones),
+            unknowns: BitPlane::ZERO,
+        }
+    }
+
+    /// 是否为纯二值（没有 `Unknown`）。
+    pub const fn is_binary(self) -> bool {
+        self.unknowns.0 == 0
+    }
+
+    /// 若是纯二值，取出 `ones` 平面；否则 `None`。
+    pub const fn as_binary(self) -> Option<u64> {
+        if self.is_binary() {
+            Some(self.ones.0)
+        } else {
+            None
+        }
+    }
+
     /// 全假。
     pub const FALSE: Self = Self {
         ones: BitPlane::ZERO,
@@ -390,7 +414,7 @@ impl Evaluator {
     /// `base` 是该分块首个赋值的编号（必为 64 的倍数）。
     /// 变量 `i` 的取值由赋值编号的第 `i` 个三进制位决定
     /// （`0 → 0`，`1 → 1`，`2 → X`）。
-    pub(crate) fn chunk_planes(&self, base: u64) -> Vec<TriBit> {
+    pub fn chunk_planes(&self, base: u64) -> Vec<TriBit> {
         let mut planes = Vec::with_capacity(self.variables.len());
         for i in 0..self.variables.len() {
             let mut ones = 0u64;

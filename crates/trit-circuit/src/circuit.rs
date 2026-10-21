@@ -12,8 +12,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::algebra::Algebra;
-use crate::value::Ternary;
+use trit_core::algebra::Algebra;
+use trit_core::value::Ternary;
 
 /// 电路中的一个信号（节点）。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

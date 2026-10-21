@@ -1,0 +1,15 @@
+[package]
+name = "trit-eval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值求值、真值表与化简"
+
+[dependencies]
+trit-core.workspace = true
+
+[dev-dependencies]
+indoc = "2.0.8"
+proptest = "1.12.0"

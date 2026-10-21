@@ -1,8 +1,8 @@
-use tla_core::algebra::Algebra;
-use tla_core::ast::Expr;
-use tla_core::eval::{decode_assignment, equivalent, eval};
-use tla_core::parser::Parser;
-use tla_core::symbolic::equivalent_symbolic;
+use trit_core::algebra::Algebra;
+use trit_core::ast::Expr;
+use trit_core::parser::Parser;
+use trit_eval::eval::{decode_assignment, equivalent, eval};
+use trit_sat::symbolic::equivalent_symbolic;
 
 fn parse(src: &str) -> Expr {
     Parser::parse(src).expect("测试表达式应可解析")

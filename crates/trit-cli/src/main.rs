@@ -15,21 +15,21 @@ use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use tla_core::algebra::Algebra;
-use tla_core::ast::Expr;
-use tla_core::circuit::{Circuit, Gate, GateKind, Signal};
-use tla_core::eval::{Assignment, decode_assignment, equivalent, eval, truth_table};
-use tla_core::parser::Parser as ExprParser;
-use tla_core::simplify::{SimplifyOptions, simplify_with};
-use tla_core::symbolic::equivalent_symbolic;
-use tla_core::value::Ternary;
+use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
+use trit_core::algebra::Algebra;
+use trit_core::ast::Expr;
+use trit_core::parser::Parser as ExprParser;
+use trit_core::value::Ternary;
+use trit_eval::eval::{Assignment, decode_assignment, equivalent, eval, truth_table};
+use trit_eval::simplify::{SimplifyOptions, simplify_with};
+use trit_sat::symbolic::equivalent_symbolic;
 
 use crate::output::Format;
 
 /// 三值逻辑分析器。
 #[derive(Debug, Parser)]
 #[command(
-    name = "tla",
+    name = "trit",
     version,
     about = "三值逻辑分析器：Kleene / Łukasiewicz / Bochvar 三套语义的求值、真值表、等价判定与化简",
     long_about = None
@@ -325,7 +325,7 @@ fn cmd_circuit(path: &std::path::Path, format: Format, alg_name: &str) -> Result
         .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
     let circuit =
         parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?;
-    let report = tla_core::circuit::analyze(&circuit, alg)
+    let report = trit_circuit::circuit::analyze(&circuit, alg)
         .with_context(|| format!("网表分析失败：{}", path.display()))?;
 
     match format {

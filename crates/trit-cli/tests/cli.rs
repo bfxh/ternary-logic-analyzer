@@ -3,9 +3,9 @@
 use std::process::Command;
 
 /// 二进制路径（由 Cargo 在集成测试时注入）。
-fn tla_bin() -> std::path::PathBuf {
-    // target/debug/tla.exe；CARGO_BIN_EXE_<name> 环境变量更可靠
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_tla") {
+fn trit_bin() -> std::path::PathBuf {
+    // target/debug/trit.exe；CARGO_BIN_EXE_<name> 环境变量更可靠
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_trit") {
         return std::path::PathBuf::from(p);
     }
     let mut dir = std::env::current_exe().expect("current exe");
@@ -13,15 +13,15 @@ fn tla_bin() -> std::path::PathBuf {
     if dir.ends_with("deps") {
         dir.pop();
     }
-    dir.join(format!("tla{}", std::env::consts::EXE_SUFFIX))
+    dir.join(format!("trit{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// 运行 CLI，返回 (stdout, stderr, 退出码)。
 fn run(args: &[&str]) -> (String, String, i32) {
-    let out = Command::new(tla_bin())
+    let out = Command::new(trit_bin())
         .args(args)
         .output()
-        .expect("failed to run tla binary");
+        .expect("failed to run trit binary");
     (
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
@@ -168,7 +168,7 @@ fn circuit_analyzes_netlist() {
 
 #[test]
 fn circuit_rejects_malformed_netlist() {
-    let dir = std::env::temp_dir().join("tla-test-netlist");
+    let dir = std::env::temp_dir().join("trit-test-netlist");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("bad.net");
     std::fs::write(&path, "input a\ngate FOO a b out\n").unwrap();

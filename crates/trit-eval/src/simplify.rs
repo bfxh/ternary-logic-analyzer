@@ -16,10 +16,10 @@
 //! - 矛盾律 `a ∧ ¬a = 0` 在三种语义下**都不成立**
 //!   （取 `a = X` 时 `X ∧ X = X`），因此化简器不使用该规则。
 
-use crate::algebra::Algebra;
-use crate::ast::Expr;
 use crate::eval::{VarMap, truth_table};
-use crate::value::Ternary;
+use trit_core::algebra::Algebra;
+use trit_core::ast::Expr;
+use trit_core::value::Ternary;
 
 /// 化简选项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,13 +288,6 @@ fn rewrite_equiv(x: Expr, y: Expr, alg: Algebra) -> Expr {
     Expr::equiv(x, y)
 }
 
-impl Expr {
-    /// 是否是未知常量 `X`。
-    fn is_unknown_const(&self) -> bool {
-        matches!(self, Expr::Const(Ternary::Unknown))
-    }
-}
-
 /// 计算两个表达式的语义指纹（真值表摘要），用于快速判定等价。
 ///
 /// 指纹相同当且仅当两表达式在给定语义下逻辑等价（变量集相同的前提下）。
@@ -355,7 +348,7 @@ pub fn unused_var_map() -> VarMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Parser;
+    use trit_core::parser::Parser;
 
     fn simp(src: &str, alg: Algebra) -> String {
         let e = Parser::parse(src).unwrap();

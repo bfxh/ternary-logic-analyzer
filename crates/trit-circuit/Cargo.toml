@@ -1,0 +1,13 @@
+[package]
+name = "trit-circuit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值组合网表的 X 传播与 stuck-at 可测性分析"
+
+[dependencies]
+trit-core.workspace = true
+thiserror = "2.0.21"
+serde = { version = "1.0.229", features = ["derive"] }

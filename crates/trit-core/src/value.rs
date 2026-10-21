@@ -35,6 +35,25 @@ impl Ternary {
     /// 三值的所有取值，按 `False < Unknown < True` 顺序。
     pub const ALL: [Self; 3] = [Self::False, Self::Unknown, Self::True];
 
+    /// `bool -> Ternary`：`true -> True`，`false -> False`（无分支 Select）。
+    pub const fn from_bool(value: bool) -> Self {
+        if value { Self::True } else { Self::False }
+    }
+
+    /// `Ternary -> Option<bool>`：`Unknown` 返回 `None`。
+    pub const fn to_bool(self) -> Option<bool> {
+        match self {
+            Self::True => Some(true),
+            Self::False => Some(false),
+            Self::Unknown => None,
+        }
+    }
+
+    /// 是否为二值（非 `Unknown`）。
+    pub const fn is_binary(self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+
     /// 数值形式：`False -> 0`，`Unknown -> 0.5`，`True -> 1`。
     ///
     /// 这是把 `X` 视为“0 与 1 之间的不确定值”时的自然映射，

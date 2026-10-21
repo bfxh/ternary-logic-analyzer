@@ -11,10 +11,10 @@ use std::collections::{HashMap, HashSet};
 
 use varisat::{ExtendFormula, Lit, Solver, Var};
 
-use crate::algebra::Algebra;
-use crate::ast::Expr;
-use crate::eval::EquivalenceResult;
-use crate::value::Ternary;
+use trit_core::algebra::Algebra;
+use trit_core::ast::Expr;
+use trit_core::value::Ternary;
+use trit_eval::EquivalenceResult;
 
 /// 符号化判定错误。
 #[derive(Debug, thiserror::Error)]
