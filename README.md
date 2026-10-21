@@ -129,6 +129,31 @@ not   y yn
 - **冗余输入** —— 该输入的 stuck-at 故障对本门输出无影响，可从电路中删除；
 - **不可测故障** —— 该故障在所有输入组合下都无法被主输出观测到。
 
+## 符号化等价（SAT）
+
+`equiv` 默认是 3^n 穷举，变量一多就慢；`--symbolic` 换成 dual-rail + SAT（纯 Rust 的 `varisat`）：
+
+```bash
+tla equiv --symbolic "a & (b | c)" "(a & b) | (a & c)"
+```
+
+每个三值量用两根布尔导轨 `(t, x)` 编码（`False=(0,0)`、`True=(1,0)`、`Unknown=(0,1)`），
+每个运算符按所选代数的真值表逐门加子句，K3/Ł3/B3 共用同一套编码。
+等价判定 = 断言两个根“不相等”，UNSAT 即等价；SAT 时从模型取反例。
+
+实测（同一台机器，单次，n 个变量的 AND 链与自身比较）：
+
+| 变量数 | 穷举 `equiv` | `--symbolic` |
+|---|---|---|
+| 12 | 0.05 s | 0.02 s |
+| 16 | 1.27 s | 0.02 s |
+| 18 | 12.6 s | 0.03 s |
+| 20 | 默认报错（护栏） | 0.02–0.37 s |
+| 50 | 不可行 | 0.03 s |
+
+`equiv` 默认在超过 18 个变量时**报错并提示 `--symbolic`**（避免 3^n 卡死）；`--max-vars N` 可调穷举上限。
+反例编号与 `decode_assignment` 的约定一致。
+
 ## 项目结构
 
 ```text
@@ -142,7 +167,8 @@ crates/
     src/eval.rs       求值、真值表、等价判定
     src/simplify.rs   代数化简与语义常量折叠
     src/circuit.rs    网表分析与故障检测
-    tests/            属性测试（proptest）
+    src/symbolic.rs   dual-rail + SAT 等价判定
+    tests/            属性测试与符号化对拍
   tla-cli/           命令行界面
     src/main.rs       六个子命令
     src/output.rs     table / json / csv / markdown 输出

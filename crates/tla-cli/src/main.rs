@@ -21,6 +21,7 @@ use tla_core::circuit::{Circuit, Gate, GateKind, Signal};
 use tla_core::eval::{Assignment, decode_assignment, equivalent, eval, truth_table};
 use tla_core::parser::Parser as ExprParser;
 use tla_core::simplify::{SimplifyOptions, simplify_with};
+use tla_core::symbolic::equivalent_symbolic;
 use tla_core::value::Ternary;
 
 use crate::output::Format;
@@ -77,6 +78,12 @@ enum Commands {
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
+        /// 用 SAT 符号化判定（dual-rail），不做 3^n 穷举。
+        #[arg(long)]
+        symbolic: bool,
+        /// 穷举判定的变量数上限；超过则报错并提示 `--symbolic`。
+        #[arg(long, default_value_t = 18)]
+        max_vars: usize,
     },
     /// 化简表达式。
     Simplify {
@@ -114,7 +121,9 @@ fn main() -> Result<()> {
             left,
             right,
             format,
-        } => cmd_equiv(&left, &right, format, &cli.algebra),
+            symbolic,
+            max_vars,
+        } => cmd_equiv(&left, &right, format, &cli.algebra, symbolic, max_vars),
         Commands::Simplify {
             expression,
             format,
@@ -186,23 +195,42 @@ fn cmd_table(expression: &str, format: Format, alg_name: &str) -> Result<()> {
 }
 
 /// `equiv` 子命令。
-fn cmd_equiv(left: &str, right: &str, format: Format, alg_name: &str) -> Result<()> {
+fn cmd_equiv(
+    left: &str,
+    right: &str,
+    format: Format,
+    alg_name: &str,
+    symbolic: bool,
+    max_vars: usize,
+) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let a = parse_expr(left)?;
     let b = parse_expr(right)?;
-    let result = equivalent(&a, &b, alg);
     let mut vars = a.variables();
     for v in b.variables() {
         if !vars.contains(&v) {
             vars.push(v);
         }
     }
+    let (result, method) = if symbolic {
+        (equivalent_symbolic(&a, &b, alg)?, "sat")
+    } else {
+        if vars.len() > max_vars {
+            bail!(
+                "变量数 {} 超过穷举上限 {}；用 --symbolic 走 SAT 判定",
+                vars.len(),
+                max_vars
+            );
+        }
+        (equivalent(&a, &b, alg), "exhaustive")
+    };
     match format {
         Format::Json => {
             let mut obj = serde_json::json!({
                 "equivalent": result.equivalent,
                 "algebra": alg.as_str(),
                 "variable_count": result.variable_count,
+                "method": method,
             });
             if let Some(ce) = result.counterexample {
                 let asg = decode_assignment(ce, &vars);
