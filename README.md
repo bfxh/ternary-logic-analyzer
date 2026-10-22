@@ -29,6 +29,7 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
 | `trit-circuit` | 组合网表 X 传播、stuck-at 可测性 |
 | `trit-belnap` | Belnap 四值（T/F/B/N）的 opt-in 语义 |
+| `trit-wasm` | WASM 绑定：给 `playground/` 的求值、真值表、等价 |
 | `trit-bdd` | BDD（canonical）等价判定、三值量化 |
 | `trit-policy` | 三值决策表的构建期验证 |
 | `sansheng` | 三生：统一入口伞包（re-export 以上能力） |
@@ -169,6 +170,20 @@ trit belnap equiv "a | !a" "1"             # 不等价，反例 a=N，退出码 
 - `⊕` 在 FOUR 下没有公认定义，这里取 `¬(a ⇔ b)`（`B ⊕ B = B`），不要按经典异或理解。
 - 表达式常量 `X` 映射为 `N`，`B` 只能通过赋值/真值表枚举出现。三值双导轨禁止 `(1,1)`，四值正是放开它。
 - 真值表最多 6 个变量（4^7 = 16384 行），等价判定最多 8 个变量。
+
+## WASM Playground
+
+`playground/` 是浏览器端的同一套 Rust 引擎（`trit-wasm`，wasm-bindgen）。
+三值面板支持求值 / 真值表 / 等价，四值面板支持 Belnap 求值与真值表。
+
+```bash
+rustup target add wasm32-unknown-unknown
+wasm-pack build crates/trit-wasm --target web --out-dir ../../playground/pkg
+python -m http.server 8765 --directory playground
+# 打开 http://127.0.0.1:8765/
+```
+
+`playground/pkg/` 是生成物，不入库；CI 只做 `cargo build -p trit-wasm --target wasm32-unknown-unknown`。
 
 ## 网表
 

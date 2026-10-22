@@ -1,0 +1,21 @@
+[package]
+name = "trit-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "trit 的 WASM 绑定：浏览器里跑求值、真值表、等价与 Belnap 四值"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[dependencies]
+trit-core.workspace = true
+trit-eval.workspace = true
+trit-belnap.workspace = true
+wasm-bindgen = "0.2"
+serde_json = "1.0.154"

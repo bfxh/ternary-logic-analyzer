@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trit playground</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12161b;
+    --line: #232a33;
+    --text: #e7e9ec;
+    --muted: #8b95a3;
+    --accent: #e3b341;
+    --ok: #7fd1b9;
+    --bad: #ef7d7d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    padding: 32px 24px 48px;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+  .tag { color: var(--muted); font-size: 13px; }
+  .lede { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 18px; }
+  .tab {
+    appearance: none; border: 1px solid var(--line); background: transparent;
+    color: var(--muted); padding: 7px 14px; border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 13px;
+  }
+  .tab[aria-selected="true"] { color: var(--text); border-color: #3a4552; background: #171c22; }
+
+  .grid { display: grid; gap: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 190px; gap: 12px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+  input, select, textarea, button { font: inherit; }
+  input, select, textarea {
+    width: 100%; background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px;
+  }
+  textarea { resize: vertical; min-height: 58px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 14px; }
+  input { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #48566a; }
+
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  button.run {
+    appearance: none; border: 1px solid #3a4552; background: #1a2027;
+    color: var(--text); padding: 8px 16px; border-radius: 6px; cursor: pointer;
+  }
+  button.run:hover { border-color: #4c5b6e; }
+  button.primary { border-color: #6b5a22; color: var(--accent); }
+
+  .out {
+    margin-top: 20px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); min-height: 120px;
+  }
+  .out-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 12px;
+  }
+  #status.ok { color: var(--ok); }
+  #status.bad { color: var(--bad); }
+  pre {
+    margin: 0; padding: 14px 12px; overflow: auto;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 13.5px; line-height: 1.5; color: #d6dbe3; white-space: pre;
+  }
+  #result:empty::before { content: "运行一次看结果"; color: #5d6673; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>trit playground</h1>
+    <span class="tag">K3 / Ł3 / B3 · Belnap</span>
+  </header>
+  <p class="lede">在浏览器里跑同一套 Rust 引擎：单点求值、真值表、等价判定。按 <code>Ctrl+Enter</code> 运行。</p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab3" aria-selected="true">三值</button>
+    <button class="tab" role="tab" id="tab4" aria-selected="false">四值 Belnap</button>
+  </div>
+
+  <div class="grid">
+    <div>
+      <label for="exprA">表达式 A</label>
+      <textarea id="exprA" spellcheck="false">a &amp; (b | c)</textarea>
+    </div>
+    <div>
+      <label for="exprB">表达式 B（等价判定用，可空）</label>
+      <textarea id="exprB" spellcheck="false">(a &amp; b) | (a &amp; c)</textarea>
+    </div>
+    <div class="row">
+      <div>
+        <label for="assign">赋值</label>
+        <input id="assign" spellcheck="false" value="a=1,b=X,c=0">
+      </div>
+      <div>
+        <label for="algebra">语义</label>
+        <select id="algebra">
+          <option value="kleene">Kleene</option>
+          <option value="lukasiewicz">Łukasiewicz</option>
+          <option value="bochvar">Bochvar</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="run primary" id="btn-eval">求值</button>
+    <button class="run" id="btn-table">真值表</button>
+    <button class="run" id="btn-equiv">等价</button>
+  </div>
+
+  <section class="out">
+    <div class="out-head"><span id="status">就绪</span><span id="meta"></span></div>
+    <pre id="result"></pre>
+  </section>
+</main>
+
+<script type="module">
+import init, {
+  evalExpr, truthTable, equivalent, belnapEval, belnapTable,
+} from "./pkg/trit_wasm.js";
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+const metaEl = $("meta");
+const resultEl = $("result");
+let mode = "ternary";
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+function renderTable(data) {
+  const vars = data.variables;
+  const width = Math.max(1, ...vars.map((v) => v.length));
+  const head = vars.map((v) => v.padEnd(width)).join(" ");
+  const lines = [vars.length ? `${head} | 值` : "值"];
+  for (const row of data.rows) {
+    const cells = vars.map((v) => (row.assignment[v] ?? "X").padEnd(width));
+    lines.push(vars.length ? `${cells.join(" ")} | ${row.value}` : row.value);
+  }
+  return lines.join("\n");
+}
+
+function renderCounterexample(counterexample) {
+  if (!counterexample) return "";
+  const entries = Object.entries(counterexample);
+  if (!entries.length) return "（无自由变量）";
+  return entries.map(([k, v]) => `${k}=${v}`).join("，");
+}
+
+async function runEval() {
+  const expr = $("exprA").value;
+  const assign = $("assign").value;
+  const value = mode === "ternary"
+    ? evalExpr(expr, assign, $("algebra").value)
+    : belnapEval(expr, assign);
+  setStatus("求值完成", "ok");
+  metaEl.textContent = mode === "ternary" ? $("algebra").value : "belnap";
+  resultEl.textContent = `${expr}\n  = ${value}`;
+}
+
+async function runTable() {
+  const expr = $("exprA").value;
+  const data = JSON.parse(
+    mode === "ternary"
+      ? truthTable(expr, $("algebra").value)
+      : belnapTable(expr),
+  );
+  setStatus("真值表", "ok");
+  metaEl.textContent = `${data.rows.length} 行`;
+  resultEl.textContent = renderTable(data);
+}
+
+async function runEquiv() {
+  if (mode !== "ternary") {
+    setStatus("Belnap 等价请用 CLI：trit belnap equiv", "bad");
+    return;
+  }
+  const data = JSON.parse(
+    equivalent($("exprA").value, $("exprB").value, $("algebra").value),
+  );
+  if (data.equivalent) {
+    setStatus("等价", "ok");
+    metaEl.textContent = `${data.variable_count} 个变量`;
+    resultEl.textContent = `A ≡ B 在 ${$("algebra").value} 下逐点相等\n变量数 ${data.variable_count}`;
+  } else {
+    setStatus("不等价", "bad");
+    metaEl.textContent = `${data.variable_count} 个变量`;
+    resultEl.textContent = `反例：${renderCounterexample(data.counterexample)}`;
+  }
+}
+
+function setMode(next) {
+  mode = next;
+  $("tab3").setAttribute("aria-selected", String(next === "ternary"));
+  $("tab4").setAttribute("aria-selected", String(next === "belnap"));
+  $("algebra").disabled = next === "belnap";
+  $("assign").value = next === "ternary" ? "a=1,b=X,c=0" : "a=N,b=B,c=T";
+  $("exprA").value = next === "ternary" ? "a & (b | c)" : "a & b";
+  $("exprB").value = next === "ternary" ? "(a & b) | (a & c)" : "b & a";
+}
+
+function guard(fn) {
+  return async () => {
+    try {
+      await fn();
+    } catch (error) {
+      setStatus(String(error), "bad");
+    }
+  };
+}
+
+$("btn-eval").addEventListener("click", guard(runEval));
+$("btn-table").addEventListener("click", guard(runTable));
+$("btn-equiv").addEventListener("click", guard(runEquiv));
+$("tab3").addEventListener("click", () => setMode("ternary"));
+$("tab4").addEventListener("click", () => setMode("belnap"));
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    guard(runEval)();
+  }
+});
+
+await init();
+setStatus("WASM 已就绪", "ok");
+guard(runEval)();
+</script>
+</body>
+</html>

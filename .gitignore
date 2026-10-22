@@ -1,4 +1,5 @@
 /target
+/playground/pkg
 **/*.rs.bk
 *.pdb
 .idea/
