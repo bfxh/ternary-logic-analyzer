@@ -112,6 +112,14 @@ MUTANTS = [
         "filter": "untestable_reasons",
     },
     {
+        "name": "bdd: 频率降序写反",
+        "file": "crates/trit-bdd/src/lib.rs",
+        "old": "                    cr.cmp(&cl)",
+        "new": "                    cl.cmp(&cr)",
+        "pkg": "trit-bdd",
+        "filter": "frequency_order",
+    },
+    {
         "name": "bdd: is_valid 退回布尔全集",
         "file": "crates/trit-bdd/src/lib.rs",
         "old": "        self.bdd.not().and(&self.valid_free).is_false()",

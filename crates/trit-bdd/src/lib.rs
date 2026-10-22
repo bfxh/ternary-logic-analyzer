@@ -48,6 +48,102 @@ pub struct BddVerdict {
     pub nodes: usize,
 }
 
+/// BDD 的静态变量排序策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarOrder {
+    /// 首次出现顺序（默认）。
+    Appearance,
+    /// 首次出现顺序反转。
+    Reverse,
+    /// 出现次数降序，同频保持首次出现顺序。
+    FrequencyDesc,
+    /// 出现次数升序。
+    FrequencyAsc,
+}
+
+impl VarOrder {
+    /// 稳定短名。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Appearance => "appearance",
+            Self::Reverse => "reverse",
+            Self::FrequencyDesc => "frequency",
+            Self::FrequencyAsc => "frequency-asc",
+        }
+    }
+
+    /// 从 CLI 名解析。
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "appearance" => Some(Self::Appearance),
+            "reverse" => Some(Self::Reverse),
+            "frequency" | "frequency-desc" => Some(Self::FrequencyDesc),
+            "frequency-asc" => Some(Self::FrequencyAsc),
+            _ => None,
+        }
+    }
+}
+
+fn union_vars(a: &Expr, b: &Expr) -> Vec<String> {
+    let mut vars = a.variables();
+    for v in b.variables() {
+        if !vars.contains(&v) {
+            vars.push(v);
+        }
+    }
+    vars
+}
+
+fn count_vars(expr: &Expr, counts: &mut HashMap<String, usize>) {
+    let mut stack = vec![expr];
+    while let Some(node) = stack.pop() {
+        match node {
+            Expr::Var(name) => *counts.entry(name.clone()).or_default() += 1,
+            Expr::Const(_) => {}
+            Expr::Not(inner) => stack.push(inner),
+            Expr::And(a, b)
+            | Expr::Or(a, b)
+            | Expr::Xor(a, b)
+            | Expr::Implies(a, b)
+            | Expr::Equiv(a, b) => {
+                stack.push(a);
+                stack.push(b);
+            }
+        }
+    }
+}
+
+/// 按给定策略排列两个表达式的并集变量。
+pub fn order_variables(a: &Expr, b: &Expr, order: VarOrder) -> Vec<String> {
+    let vars = union_vars(a, b);
+    match order {
+        VarOrder::Appearance => vars,
+        VarOrder::Reverse => vars.into_iter().rev().collect(),
+        VarOrder::FrequencyDesc | VarOrder::FrequencyAsc => {
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            count_vars(a, &mut counts);
+            count_vars(b, &mut counts);
+            let index: HashMap<String, usize> = vars
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect();
+            let mut ordered = vars;
+            ordered.sort_by(|left, right| {
+                let cl = counts.get(left.as_str()).copied().unwrap_or(0);
+                let cr = counts.get(right.as_str()).copied().unwrap_or(0);
+                let by_count = if order == VarOrder::FrequencyDesc {
+                    cr.cmp(&cl)
+                } else {
+                    cl.cmp(&cr)
+                };
+                by_count.then_with(|| index[left.as_str()].cmp(&index[right.as_str()]))
+            });
+            ordered
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Node {
     t: Bdd,
@@ -264,16 +360,77 @@ pub fn equivalent_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<BddVerdict, BddError> {
+    check_pair(a, b)?;
+    let vars = union_vars(a, b);
+    verdict_with_vars(a, b, alg, binary_vars, &vars)
+}
+
+/// 用指定变量顺序判定；顺序里缺失的变量按首次出现顺序补在末尾。
+pub fn equivalent_bdd_with_order(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    order: &[String],
+) -> Result<BddVerdict, BddError> {
+    check_pair(a, b)?;
+    let union = union_vars(a, b);
+    let mut vars: Vec<String> = Vec::with_capacity(union.len());
+    for name in order {
+        if union.contains(name) && !vars.contains(name) {
+            vars.push(name.clone());
+        }
+    }
+    for name in union {
+        if !vars.contains(&name) {
+            vars.push(name);
+        }
+    }
+    verdict_with_vars(a, b, alg, binary_vars, &vars)
+}
+
+/// 试四种静态排序，取差集 BDD 节点数最少者；平局保留先出现者。
+pub fn equivalent_bdd_best(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<(BddVerdict, VarOrder), BddError> {
+    check_pair(a, b)?;
+    let mut best: Option<(BddVerdict, VarOrder)> = None;
+    for order in [
+        VarOrder::Appearance,
+        VarOrder::Reverse,
+        VarOrder::FrequencyDesc,
+        VarOrder::FrequencyAsc,
+    ] {
+        let vars = order_variables(a, b, order);
+        let verdict = verdict_with_vars(a, b, alg, binary_vars, &vars)?;
+        if best
+            .as_ref()
+            .is_none_or(|(current, _)| verdict.nodes < current.nodes)
+        {
+            best = Some((verdict, order));
+        }
+    }
+    Ok(best.expect("至少尝试一种排序"))
+}
+
+fn check_pair(a: &Expr, b: &Expr) -> Result<(), BddError> {
     for expr in [a, b] {
         check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     }
-    let mut vars = a.variables();
-    for v in b.variables() {
-        if !vars.contains(&v) {
-            vars.push(v);
-        }
-    }
-    let enc = Encoder::new(alg, &vars, binary_vars)?;
+    Ok(())
+}
+
+fn verdict_with_vars(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    vars: &[String],
+) -> Result<BddVerdict, BddError> {
+    let enc = Encoder::new(alg, vars, binary_vars)?;
     let ra = enc.encode(a);
     let rb = enc.encode(b);
     let equal = ra.t.iff(&rb.t).and(&ra.x.iff(&rb.x));
@@ -293,8 +450,8 @@ pub fn equivalent_bdd(
         .sat_valuations()
         .next()
         .ok_or(BddError::MissingWitness)?;
-    let assignment = assignment_from_valuation(&enc, &vars, valuation.as_vector());
-    let index = assignment_index(&assignment, &vars);
+    let assignment = assignment_from_valuation(&enc, vars, valuation.as_vector());
+    let index = assignment_index(&assignment, vars);
     Ok(BddVerdict {
         result: EquivalenceResult {
             equivalent: false,

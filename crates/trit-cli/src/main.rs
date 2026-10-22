@@ -18,7 +18,10 @@ use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use trit_bdd::{Quantifier, equivalent_bdd, quantify_bdd};
+use trit_bdd::{
+    Quantifier, VarOrder, equivalent_bdd, equivalent_bdd_best, equivalent_bdd_with_order,
+    order_variables, quantify_bdd,
+};
 use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
@@ -92,6 +95,9 @@ enum Commands {
         /// 用 BDD（canonical）判定；与 `--symbolic` 互斥。
         #[arg(long)]
         bdd: bool,
+        /// BDD 变量排序：appearance（默认）/ reverse / frequency / frequency-asc / best。
+        #[arg(long, value_name = "ORDER", default_value = "appearance")]
+        bdd_order: String,
         /// 穷举判定的变量数上限；超过则报错并提示 `--symbolic`。
         #[arg(long, default_value_t = 18)]
         max_vars: usize,
@@ -219,6 +225,7 @@ fn main() -> Result<()> {
             format,
             symbolic,
             bdd,
+            bdd_order,
             max_vars,
             binary,
             binary_all,
@@ -232,6 +239,7 @@ fn main() -> Result<()> {
             EquivOptions {
                 symbolic,
                 bdd,
+                bdd_order,
                 max_vars,
                 binary,
                 binary_all,
@@ -343,6 +351,7 @@ fn cmd_table(expression: &str, format: Format, alg_name: &str) -> Result<()> {
 struct EquivOptions {
     symbolic: bool,
     bdd: bool,
+    bdd_order: String,
     max_vars: usize,
     binary: Option<String>,
     binary_all: bool,
@@ -360,6 +369,7 @@ fn cmd_equiv(
     let EquivOptions {
         symbolic,
         bdd,
+        bdd_order,
         max_vars,
         binary: binary_list,
         binary_all,
@@ -457,8 +467,26 @@ fn cmd_equiv(
     } else {
         None
     };
+    let mut bdd_order_used = None;
     let (result, method, bdd_nodes) = if bdd {
-        let verdict = equivalent_bdd(&a, &b, alg, &binary)?;
+        let verdict = match bdd_order.as_str() {
+            "best" => {
+                let (verdict, order) = equivalent_bdd_best(&a, &b, alg, &binary)?;
+                bdd_order_used = Some(order.as_str());
+                verdict
+            }
+            name => {
+                let order = VarOrder::parse(name)
+                    .ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?;
+                bdd_order_used = Some(order.as_str());
+                if order == VarOrder::Appearance {
+                    equivalent_bdd(&a, &b, alg, &binary)?
+                } else {
+                    let vars = order_variables(&a, &b, order);
+                    equivalent_bdd_with_order(&a, &b, alg, &binary, &vars)?
+                }
+            }
+        };
         (verdict.result, "bdd", Some(verdict.nodes))
     } else if symbolic {
         let method = if binary.is_empty() {
@@ -498,6 +526,9 @@ fn cmd_equiv(
             if let Some(nodes) = bdd_nodes.filter(|_| stats) {
                 obj["bdd_nodes"] = serde_json::json!(nodes);
             }
+            if let Some(order) = bdd_order_used {
+                obj["bdd_order"] = serde_json::json!(order);
+            }
             if let Some(asg) = &result.counterexample_assignment {
                 let mut pairs = serde_json::Map::new();
                 for name in asg.variables() {
@@ -526,7 +557,10 @@ fn cmd_equiv(
                 );
             }
             if let (Some(nodes), true) = (bdd_nodes, stats) {
-                eprintln!("BDD：nodes={nodes}");
+                match bdd_order_used {
+                    Some(order) => eprintln!("BDD：nodes={nodes} order={order}"),
+                    None => eprintln!("BDD：nodes={nodes}"),
+                }
             }
             if result.equivalent {
                 println!("等价：{left} ≡ {right}  [{alg}]");

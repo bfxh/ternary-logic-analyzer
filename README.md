@@ -142,6 +142,9 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 结论：这批结构化小公式上 SAT 略快；BDD 的价值在 canonical 表示与可枚举/可组合的图结构，
 不是“无条件更快”。变量顺序、函数结构都会影响 BDD 规模，极端函数会指数爆炸——按基准选引擎。
 
+变量顺序可用 `--bdd-order` 选：`appearance`（默认）、`reverse`、`frequency`、`frequency-asc`、
+`best`（试四种取差集 BDD 节点最少者）。`--stats` 会打印所选顺序与节点数。
+
 ## 量化（`trit quantify`）
 
 对三值变量做存在/全称量化。量化的对象是 **trit**（`{0,1,X}`），不是两根布尔导轨：

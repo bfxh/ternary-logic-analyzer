@@ -21,7 +21,8 @@
 //! ```
 
 pub use trit_bdd::{
-    BddError, BddVerdict, Quantified, Quantifier, equivalent_bdd, quantify_bdd, satisfiable_bdd,
+    BddError, BddVerdict, Quantified, Quantifier, VarOrder, equivalent_bdd, equivalent_bdd_best,
+    equivalent_bdd_with_order, order_variables, quantify_bdd, satisfiable_bdd,
 };
 pub use trit_belnap::{
     B4, Row as BelnapRow, Table as BelnapTable, equivalent as equivalent_belnap,
