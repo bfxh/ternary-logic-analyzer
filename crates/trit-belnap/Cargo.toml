@@ -1,0 +1,11 @@
+[package]
+name = "trit-belnap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Belnap 四值逻辑（FOUR）：T / F / B / N 的 opt-in 语义"
+
+[dependencies]
+trit-core.workspace = true

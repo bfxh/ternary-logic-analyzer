@@ -65,7 +65,8 @@
 
 - **v0.2（本版）**：五 crate workspace、二进制零开销桥、SAT 与网表并入。
 - **v0.3**：反例最小化或 BDD 后端（二选一，按基准）；`trit verify` 决策表 + GitHub Action 模板。
-- **v0.4**：WASM Playground；四值（Belnap）作为 opt-in 语义。
+- **v0.4（进行中）**：Belnap 四值已落地（`trit-belnap` + `trit belnap`，opt-in，不改三值）；
+  WASM Playground 待做。
 
 ## 参考
 

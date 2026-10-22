@@ -34,10 +34,28 @@ fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "belnap", "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }
+}
+
+#[test]
+fn belnap_eval_paraconsistent_conflict() {
+    let (stdout, stderr, code) = run(&["belnap", "eval", "a & b", "-s", "a=N,b=B"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("=>  F"), "stdout={stdout}");
+}
+
+#[test]
+fn belnap_equiv_reports_counterexample_and_exit_2() {
+    let (stdout, _, code) = run(&["belnap", "equiv", "a | !a", "1"]);
+    assert_eq!(code, 2, "stdout={stdout}");
+    assert!(stdout.contains("反例"), "stdout={stdout}");
+
+    let (stdout, _, code) = run(&["belnap", "equiv", "!(a & b)", "!a | !b"]);
+    assert_eq!(code, 0, "stdout={stdout}");
+    assert!(stdout.contains("16 组全等"), "stdout={stdout}");
 }
 
 #[test]

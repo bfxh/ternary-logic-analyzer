@@ -4,6 +4,8 @@
 
 ### Added
 
+- `trit-belnap`：Belnap 四值 `T/F/B/N` 的 opt-in 语义（双轨 `(t,f)`、`∧/∨/¬/⇒/⇔`、
+  4^n 真值表与逐点等价）；`trit belnap eval|table|equiv`；`sansheng` 再导出。
 - 网表指令 `const <0|1|X> <out>` 与 `buf <in> <out>`；`examples/x_mask.net` 演示 `X & 0` / `X | 1` 遮蔽。
 - 网表校验：同一信号多驱动（含“既是主输入又被门驱动”）与重复主输入分别报
   `MultipleDrivers` / `DuplicateInput`。

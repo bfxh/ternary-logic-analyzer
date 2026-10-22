@@ -645,6 +645,7 @@ name = "sansheng"
 version = "0.3.2"
 dependencies = [
  "trit-bdd",
+ "trit-belnap",
  "trit-circuit",
  "trit-core",
  "trit-eval",
@@ -846,6 +847,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-belnap"
+version = "0.3.2"
+dependencies = [
+ "trit-core",
+]
+
+[[package]]
 name = "trit-circuit"
 version = "0.3.2"
 dependencies = [
@@ -862,6 +870,7 @@ dependencies = [
  "clap",
  "serde_json",
  "trit-bdd",
+ "trit-belnap",
  "trit-circuit",
  "trit-core",
  "trit-eval",

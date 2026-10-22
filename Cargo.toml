@@ -8,6 +8,7 @@ members = [
     "crates/trit-cli",
     "crates/trit-bdd",
     "crates/trit-policy",
+    "crates/trit-belnap",
     "crates/sansheng",
 ]
 
@@ -25,4 +26,5 @@ trit-sat = { path = "crates/trit-sat", version = "0.3.2" }
 trit-circuit = { path = "crates/trit-circuit", version = "0.3.2" }
 trit-bdd = { path = "crates/trit-bdd", version = "0.3.2" }
 trit-policy = { path = "crates/trit-policy", version = "0.3.2" }
+trit-belnap = { path = "crates/trit-belnap", version = "0.3.2" }
 sansheng = { path = "crates/sansheng", version = "0.3.2" }

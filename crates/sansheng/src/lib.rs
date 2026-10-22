@@ -23,6 +23,10 @@
 pub use trit_bdd::{
     BddError, BddVerdict, Quantified, Quantifier, equivalent_bdd, quantify_bdd, satisfiable_bdd,
 };
+pub use trit_belnap::{
+    B4, Row as BelnapRow, Table as BelnapTable, equivalent as equivalent_belnap,
+    eval as eval_belnap, table as table_belnap,
+};
 pub use trit_circuit::{
     Circuit, CircuitError, CircuitReport, Gate, GateKind, Signal, SimulationRow, analyze,
 };

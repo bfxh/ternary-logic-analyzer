@@ -18,6 +18,7 @@ trit-sat.workspace = true
 trit-circuit.workspace = true
 trit-bdd.workspace = true
 trit-policy.workspace = true
+trit-belnap.workspace = true
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 serde_json = "1.0.154"
