@@ -79,6 +79,15 @@ pub fn to_nand_only(circuit: &Circuit) -> Result<Circuit, MapError> {
             }
             // `Xor` 是三值强加（X 主导），没有 X 检测单元就无法用 NAND 表达。
             GateKind::Xor => return Err(MapError::Unsupported(GateKind::Xor)),
+            GateKind::XorClassic => {
+                let n1 = fresh();
+                let n2 = fresh();
+                let n3 = fresh();
+                nand(&mut mapped, a, b, &n1);
+                nand(&mut mapped, a, &n1, &n2);
+                nand(&mut mapped, b, &n1, &n3);
+                nand(&mut mapped, &n2, &n3, output);
+            }
         }
     }
     for output in &circuit.outputs {
@@ -134,6 +143,7 @@ mod tests {
     fn maps_all_gate_kinds_equivalently() {
         check(GateKind::And, &["a", "b"], "y");
         check(GateKind::Or, &["a", "b"], "y");
+        check(GateKind::XorClassic, &["a", "b"], "y");
         check(GateKind::Nand, &["a", "b"], "y");
         check(GateKind::Nor, &["a", "b"], "y");
         check(GateKind::Not, &["a"], "y");

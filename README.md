@@ -128,7 +128,7 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## 技术映射（`trit map`）
 
-把 AND/OR/NAND/NOR/NOT/BUF 降到 NAND + 常量。三值强加 `Xor` 需要 X 检测单元，明确拒绝。
+把 AND/OR/NAND/NOR/NOT/BUF/经典 XOR 降到 NAND + 常量。三值强加 `Xor` 需要 X 检测单元，明确拒绝。
 
 ```bash
 trit map design.net --to verilog
@@ -262,7 +262,7 @@ JSON 里是 `dont_care` / `dont_care_bits` / `input_bits`，table 里显示为 `
 Ł3 的 `X ⊕ X = 1` 也算“确定”）。`--assign` 必须给全所有主输入，缺一个直接报错。
 
 同一套解析在库里：`trit_circuit::netlist::parse_netlist` / `to_netlist`（可往返）。
-结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`（单比特、原语 + `assign` 的 `~ & | ^`；拒绝时序/多比特）。
+结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`（单比特、原语 + `assign` 的 `~ & |`；`xor`/`xnor` 原语支持，`assign` 里的 `^` 暂不支持；拒绝时序/多比特）。
 格式互转：`trit netlist design.net`（text → JSON），`trit netlist design.json --from json --to text`。
 网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /
 `buf <a> <out>` / `const <0|1|X> <out>`。`examples/x_mask.net` 是 `X & 0`、`X | 1` 遮蔽的最小例子。

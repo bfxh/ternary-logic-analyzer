@@ -129,9 +129,7 @@ impl Builder<'_> {
 
 fn translate_assign(rhs: &str) -> Result<String, VerilogError> {
     if rhs.contains('^') {
-        return Err(message(
-            "暂不支持 ^ / xor：trit 的 ⊕ 是强加，不是 Verilog 布尔异或",
-        ));
+        return Err(message("assign 里暂不支持 ^；请用 xor 原语（经典异或）"));
     }
     let mut text = rhs.replace("&&", "&").replace("||", "|");
     for (from, to) in [
@@ -297,12 +295,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 };
                 builder.synth(&expr, lhs)?;
             }
-            "xor" | "xnor" => {
-                return Err(message(
-                    "暂不支持 xor/xnor：trit 的 ⊕ 是强加，不是 Verilog 布尔异或",
-                ));
-            }
-            "and" | "or" | "nand" | "nor" | "not" | "buf" => {
+            "and" | "or" | "nand" | "nor" | "xor" | "xnor" | "not" | "buf" => {
                 let normalized = statement
                     .replace('(', " ( ")
                     .replace(')', " ) ")
@@ -353,7 +346,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                             "or" => GateKind::Or,
                             "nand" => GateKind::Nand,
                             "nor" => GateKind::Nor,
-                            "xnor" | "xor" => GateKind::Xor,
+                            "xnor" | "xor" => GateKind::XorClassic,
                             _ => unreachable!(),
                         };
                         let mut current = inputs[0].to_string();
@@ -399,6 +392,11 @@ fn gate_line(circuit_gate: &Gate, index: usize) -> String {
                 value.as_char().to_ascii_lowercase()
             )
         }
+        GateKind::XorClassic => format!(
+            "  xor g{index} ({output}, {}, {});
+",
+            inputs[0], inputs[1]
+        ),
         GateKind::Not | GateKind::Buf => format!(
             "  {} g{index} ({output}, {});\n",
             circuit_gate.kind.as_str().to_ascii_lowercase(),
@@ -484,6 +482,27 @@ mod tests {
         let right = analyze(&again, Algebra::Kleene).unwrap();
         assert_eq!(left.faults, right.faults);
         assert_eq!(left.output_domains, right.output_domains);
+    }
+
+    #[test]
+    fn parses_xor_primitive() {
+        use crate::circuit::propagate;
+        use std::collections::BTreeMap;
+        let text = "module m(input a, input b, output y);
+  xor g1 (y, a, b);
+endmodule
+";
+        let circuit = parse_verilog(text).unwrap();
+        let rendered = to_verilog(&circuit);
+        assert!(rendered.contains("xor g0"), "{rendered}");
+        let again = parse_verilog(&rendered).unwrap();
+        let mut assignment = BTreeMap::new();
+        assignment.insert("a".to_string(), Ternary::True);
+        assignment.insert("b".to_string(), Ternary::True);
+        let left = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+        let right = propagate(&again, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(left.signals.get("y"), Some(&Ternary::False));
+        assert_eq!(right.signals.get("y"), Some(&Ternary::False));
     }
 
     #[test]

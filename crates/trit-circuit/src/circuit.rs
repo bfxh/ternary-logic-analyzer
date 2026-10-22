@@ -53,6 +53,8 @@ pub enum GateKind {
     Not,
     /// 强加法门 `⊕`。
     Xor,
+    /// 经典异或（0/1 上 XOR；任一输入 X 则输出 X）。
+    XorClassic,
     /// 与非门。
     Nand,
     /// 或非门。
@@ -71,6 +73,7 @@ impl GateKind {
             Self::Or => "OR",
             Self::Not => "NOT",
             Self::Xor => "XOR",
+            Self::XorClassic => "XOR2",
             Self::Nand => "NAND",
             Self::Nor => "NOR",
             Self::Buf => "BUF",
@@ -85,6 +88,7 @@ impl GateKind {
             "OR" => Some(Self::Or),
             "NOT" => Some(Self::Not),
             "XOR" => Some(Self::Xor),
+            "XOR2" | "XOR_CLASSIC" | "XORC" => Some(Self::XorClassic),
             "NAND" => Some(Self::Nand),
             "NOR" => Some(Self::Nor),
             "BUF" => Some(Self::Buf),
@@ -116,6 +120,17 @@ impl GateKind {
                 inputs.first().copied().unwrap_or(Ternary::Unknown),
                 inputs.get(1).copied().unwrap_or(Ternary::Unknown),
             ),
+            Self::XorClassic => {
+                let a = inputs.first().copied().unwrap_or(Ternary::Unknown);
+                let b = inputs.get(1).copied().unwrap_or(Ternary::Unknown);
+                if a.is_unknown() || b.is_unknown() {
+                    Ternary::Unknown
+                } else if a.is_true() != b.is_true() {
+                    Ternary::True
+                } else {
+                    Ternary::False
+                }
+            }
             Self::Xor => alg.strong_add(
                 inputs.first().copied().unwrap_or(Ternary::Unknown),
                 inputs.get(1).copied().unwrap_or(Ternary::Unknown),
