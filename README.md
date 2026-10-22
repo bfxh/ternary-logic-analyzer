@@ -41,7 +41,7 @@ crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。�
 
 ```toml
 [dependencies]
-sansheng = "0.3"
+sansheng = "0.4"
 ```
 
 ```rust
