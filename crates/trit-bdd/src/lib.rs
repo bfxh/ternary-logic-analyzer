@@ -148,7 +148,14 @@ impl Encoder {
             Expr::And(a, b) => self.binary_op(a, b, |x, y| x.and(y), |v| alg.and(v[0], v[1])),
             Expr::Or(a, b) => self.binary_op(a, b, |x, y| x.or(y), |v| alg.or(v[0], v[1])),
             Expr::Xor(a, b) => {
-                self.binary_op(a, b, |x, y| x.xor(y), |v| alg.strong_add(v[0], v[1]))
+                // 二值操作数上 `⊕` 不是经典异或：K3/B3 是 `∧`，Ł3 是 `∨`。
+                let ternary = |v: &[Ternary]| alg.strong_add(v[0], v[1]);
+                match alg {
+                    Algebra::Lukasiewicz => self.binary_op(a, b, |x, y| x.or(y), ternary),
+                    Algebra::Kleene | Algebra::Bochvar => {
+                        self.binary_op(a, b, |x, y| x.and(y), ternary)
+                    }
+                }
             }
             Expr::Implies(a, b) => {
                 self.binary_op(a, b, |x, y| x.not().or(y), |v| alg.implies(v[0], v[1]))

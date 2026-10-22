@@ -232,3 +232,35 @@ fn minimal_counterexample_is_sufficient() {
         );
     }
 }
+
+#[test]
+fn binary_fast_path_uses_strong_add_not_xor() {
+    // 常量走二值快速路径；⊕ 在 K3/B3 上是 ∧，在 Ł3 上是 ∨。
+    for (alg, left, right) in [
+        (Algebra::Kleene, "1 ^ 1", "1"),
+        (Algebra::Kleene, "1 ^ 0", "0"),
+        (Algebra::Kleene, "0 ^ 1", "0"),
+        (Algebra::Lukasiewicz, "1 ^ 0", "1"),
+        (Algebra::Lukasiewicz, "0 ^ 0", "0"),
+        (Algebra::Bochvar, "1 ^ 1", "1"),
+    ] {
+        let a = parse(left);
+        let b = parse(right);
+        assert!(
+            equivalent(&a, &b, alg).equivalent,
+            "{alg:?}: {left} vs {right} 应当等价"
+        );
+        let sat = equivalent_symbolic(&a, &b, alg).expect("SAT 编码不应失败");
+        assert!(sat.equivalent, "{alg:?}: {left} vs {right} SAT 误判");
+    }
+
+    // 声明为二值的变量也走快速路径。
+    let binary: HashSet<String> = ["a".to_string()].into_iter().collect();
+    let a = parse("a ^ 1");
+    let k3 = equivalent_symbolic_with(&a, &parse("a"), Algebra::Kleene, &binary)
+        .expect("SAT 编码不应失败");
+    assert!(k3.equivalent, "K3: a ^ 1 ≡ a");
+    let l3 = equivalent_symbolic_with(&a, &parse("1"), Algebra::Lukasiewicz, &binary)
+        .expect("SAT 编码不应失败");
+    assert!(l3.equivalent, "Ł3: a ^ 1 ≡ 1");
+}

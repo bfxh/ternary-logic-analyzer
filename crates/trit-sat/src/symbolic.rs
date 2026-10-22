@@ -214,7 +214,7 @@ impl Encoder {
                 let a = self.encode(a);
                 let b = self.encode(b);
                 if a.binary && b.binary {
-                    let y = self.binary_xor(a.t, b.t);
+                    let y = self.binary_strong_add(a.t, b.t);
                     Node {
                         t: y,
                         x: self.false_var,
@@ -291,18 +291,12 @@ impl Encoder {
         y
     }
 
-    /// 经典 CNF：`y = a ⊕ b`。
-    fn binary_xor(&mut self, a: Var, b: Var) -> Var {
-        let y = self.fresh_var();
-        self.clause(&[
-            Self::lit(a, false),
-            Self::lit(b, false),
-            Self::lit(y, false),
-        ]);
-        self.clause(&[Self::lit(a, true), Self::lit(b, true), Self::lit(y, false)]);
-        self.clause(&[Self::lit(a, true), Self::lit(b, false), Self::lit(y, true)]);
-        self.clause(&[Self::lit(a, false), Self::lit(b, true), Self::lit(y, true)]);
-        y
+    /// 二值操作数上的 `⊕`（强加法）：K3/B3 是 `∧`，Ł3 是 `∨`——不是经典异或。
+    fn binary_strong_add(&mut self, a: Var, b: Var) -> Var {
+        match self.alg {
+            Algebra::Lukasiewicz => self.binary_or(a, b),
+            Algebra::Kleene | Algebra::Bochvar => self.binary_and(a, b),
+        }
     }
 
     /// 经典 CNF：`y = a ⇒ b`。

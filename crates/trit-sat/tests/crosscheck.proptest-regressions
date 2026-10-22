@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 01b99eb055048713266485e981d64ba336045c71697a4010e0aa9127e75a5be0 # shrinks to e = Or(Implies(Xor(Const(True), Const(False)), Const(Unknown)), Xor(Const(True), Xor(Const(False), Const(True)))), alg = Kleene
+cc 304431c20d0f5882fdc7178f986130928ff96cd17c3657dc2fa1c59d73f7c4d0 # shrinks to a = Not(Xor(Const(True), Const(True))), b = Var("a"), alg = Kleene

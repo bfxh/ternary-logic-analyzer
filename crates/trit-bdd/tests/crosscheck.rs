@@ -179,3 +179,24 @@ fn bdd_counterexample_uses_ternary_values() {
     // a=1 或 a=X 都能让 a&X = X ≠ 0；只要不是 0 即可。
     assert_ne!(asg.get("a"), Some(Ternary::False));
 }
+
+#[test]
+fn binary_fast_path_uses_strong_add_not_xor() {
+    for (alg, left, right) in [
+        (Algebra::Kleene, "1 ^ 1", "1"),
+        (Algebra::Kleene, "1 ^ 0", "0"),
+        (Algebra::Lukasiewicz, "1 ^ 0", "1"),
+        (Algebra::Bochvar, "1 ^ 0", "0"),
+    ] {
+        let verdict = equivalent_bdd(&parse(left), &parse(right), alg, &HashSet::new())
+            .expect("BDD 不应报错");
+        assert!(verdict.result.equivalent, "{alg:?}: {left} vs {right}");
+    }
+
+    let binary: HashSet<String> = ["a".to_string()].into_iter().collect();
+    let a = parse("a ^ 1");
+    let k3 = equivalent_bdd(&a, &parse("a"), Algebra::Kleene, &binary).expect("BDD");
+    assert!(k3.result.equivalent, "K3: a ^ 1 ≡ a");
+    let l3 = equivalent_bdd(&a, &parse("1"), Algebra::Lukasiewicz, &binary).expect("BDD");
+    assert!(l3.result.equivalent, "Ł3: a ^ 1 ≡ 1");
+}
