@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use trit_bdd::{
     Quantifier, VarOrder, equivalent_bdd, equivalent_bdd_best, equivalent_bdd_with_order,
-    order_variables, quantify_bdd,
+    order_variables, quantify_bdd, quantify_bdd_best, quantify_bdd_with_order,
 };
 use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
 use trit_core::algebra::Algebra;
@@ -130,6 +130,9 @@ enum Commands {
         /// 把所有变量当作已知二值。
         #[arg(long)]
         binary_all: bool,
+        /// BDD 变量排序：appearance（默认）/ reverse / frequency / frequency-asc / best。
+        #[arg(long, value_name = "ORDER", default_value = "appearance")]
+        bdd_order: String,
         /// JSON 输出。
         #[arg(long)]
         json: bool,
@@ -253,6 +256,7 @@ fn main() -> Result<()> {
             kind,
             binary,
             binary_all,
+            bdd_order,
             json,
         } => cmd_quantify(
             &expression,
@@ -262,6 +266,7 @@ fn main() -> Result<()> {
                 kind: &kind,
                 binary,
                 binary_all,
+                bdd_order,
                 json,
             },
         ),
@@ -648,6 +653,7 @@ struct QuantifyOptions<'a> {
     kind: &'a str,
     binary: Option<String>,
     binary_all: bool,
+    bdd_order: String,
     json: bool,
 }
 
@@ -657,6 +663,7 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
         kind,
         binary: binary_list,
         binary_all,
+        bdd_order,
         json,
     } = opts;
     let Some(kind) = Quantifier::parse(kind) else {
@@ -682,7 +689,28 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
     if let Some(list) = binary_list {
         binary.extend(parse_var_list(&list, &all, "--binary")?);
     }
-    let result = quantify_bdd(&expr, &quantified, kind, alg, &binary)?;
+    let (result, used_order) = match bdd_order.as_str() {
+        "best" => {
+            let (result, order) = quantify_bdd_best(&expr, &quantified, kind, alg, &binary)?;
+            (result, order.as_str())
+        }
+        name => {
+            let order =
+                VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?;
+            if order == VarOrder::Appearance {
+                (
+                    quantify_bdd(&expr, &quantified, kind, alg, &binary)?,
+                    order.as_str(),
+                )
+            } else {
+                let vars = order_variables(&expr, &expr, order);
+                (
+                    quantify_bdd_with_order(&expr, &quantified, kind, alg, &binary, &vars)?,
+                    order.as_str(),
+                )
+            }
+        }
+    };
     let holds = match kind {
         Quantifier::Exists => result.is_satisfiable(),
         Quantifier::Forall => result.is_valid(),
@@ -697,6 +725,7 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
         let mut obj = serde_json::json!({
             "algebra": alg.as_str(),
             "method": "bdd-quantify",
+            "bdd_order": used_order,
             "quantifier": kind.as_str(),
             "quantified": quantified,
             "free": result.free_variables(),

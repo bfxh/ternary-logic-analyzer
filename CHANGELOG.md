@@ -8,6 +8,7 @@
   （贪心集合覆盖）+ 覆盖率报告。
 - `Fault::witness`（首个二进制区分向量）、`Fault::reason` 与 `Circuit::decode_binary`。
 - `AtpgReport::by_gate_kind`：覆盖率按门类型拆分（table 与 JSON 都输出）。
+- `quantify_bdd_with_order` / `quantify_bdd_best`，CLI `quantify --bdd-order`；JSON 输出所选排序。
 - BDD 节点预算：`BddLimits`（默认 100 万节点/单个 BDD）与 `equivalent_bdd_with_limits`；超限返回
   `BddError::BudgetExceeded`，构造过程逐步检查。
 - BDD 变量排序：`VarOrder`（appearance / reverse / frequency / frequency-asc）、`order_variables`、

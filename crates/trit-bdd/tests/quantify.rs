@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use trit_bdd::{BddError, Quantifier, quantify_bdd};
+use trit_bdd::{
+    BddError, Quantifier, VarOrder, order_variables, quantify_bdd, quantify_bdd_best,
+    quantify_bdd_with_order,
+};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::parser::Parser;
@@ -155,4 +158,79 @@ fn unknown_variable_is_an_error() {
     )
     .unwrap_err();
     assert!(matches!(err, BddError::UnknownVariable(v) if v == "c"));
+}
+
+#[test]
+fn ordering_does_not_change_quantified_result() {
+    let expr = parse("(a & b) | (c & d)");
+    let quantified = vec!["a".to_string(), "c".to_string()];
+    let binary = HashSet::new();
+    let base = quantify_bdd(
+        &expr,
+        &quantified,
+        Quantifier::Forall,
+        Algebra::Kleene,
+        &binary,
+    )
+    .unwrap();
+
+    for order in [
+        VarOrder::Appearance,
+        VarOrder::Reverse,
+        VarOrder::FrequencyDesc,
+        VarOrder::FrequencyAsc,
+    ] {
+        let vars = order_variables(&expr, &expr, order);
+        let q = quantify_bdd_with_order(
+            &expr,
+            &quantified,
+            Quantifier::Forall,
+            Algebra::Kleene,
+            &binary,
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(
+            q.is_valid(),
+            base.is_valid(),
+            "{} 改变了结论",
+            order.as_str()
+        );
+        let mut got = q.free_variables().to_vec();
+        let mut want = base.free_variables().to_vec();
+        got.sort();
+        want.sort();
+        assert_eq!(got, want, "自由变量集合应一致（顺序可随排序变化）");
+    }
+}
+
+#[test]
+fn best_order_is_never_worse_than_appearance() {
+    let expr = parse("(a & b) | (c & d)");
+    let quantified = vec!["a".to_string()];
+    let binary = HashSet::new();
+    let base = quantify_bdd(
+        &expr,
+        &quantified,
+        Quantifier::Exists,
+        Algebra::Kleene,
+        &binary,
+    )
+    .unwrap();
+    let (best, order) = quantify_bdd_best(
+        &expr,
+        &quantified,
+        Quantifier::Exists,
+        Algebra::Kleene,
+        &binary,
+    )
+    .unwrap();
+    assert_eq!(best.is_satisfiable(), base.is_satisfiable());
+    assert!(
+        best.nodes() <= base.nodes(),
+        "best {} 比 appearance {} 还大（{}）",
+        best.nodes(),
+        base.nodes(),
+        order.as_str()
+    );
 }

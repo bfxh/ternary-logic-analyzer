@@ -704,19 +704,81 @@ pub fn quantify_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Quantified, BddError> {
-    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+    let vars = expr.variables();
+    quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars)
+}
+
+/// 指定变量顺序量化；顺序里缺失的变量按首次出现顺序补在末尾。
+pub fn quantify_bdd_with_order(
+    expr: &Expr,
+    quantified: &[String],
+    kind: Quantifier,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    order: &[String],
+) -> Result<Quantified, BddError> {
     let all = expr.variables();
+    let mut vars: Vec<String> = Vec::with_capacity(all.len());
+    for name in order {
+        if all.contains(name) && !vars.contains(name) {
+            vars.push(name.clone());
+        }
+    }
+    for name in all {
+        if !vars.contains(&name) {
+            vars.push(name);
+        }
+    }
+    quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars)
+}
+
+/// 试四种静态排序，取量化 BDD 节点数最少者；平局保留先出现者。
+pub fn quantify_bdd_best(
+    expr: &Expr,
+    quantified: &[String],
+    kind: Quantifier,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<(Quantified, VarOrder), BddError> {
+    let mut best: Option<(Quantified, VarOrder)> = None;
+    for order in [
+        VarOrder::Appearance,
+        VarOrder::Reverse,
+        VarOrder::FrequencyDesc,
+        VarOrder::FrequencyAsc,
+    ] {
+        let vars = order_variables(expr, expr, order);
+        let quantified = quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars)?;
+        if best
+            .as_ref()
+            .is_none_or(|(current, _)| quantified.nodes() < current.nodes())
+        {
+            best = Some((quantified, order));
+        }
+    }
+    Ok(best.expect("至少尝试一种排序"))
+}
+
+fn quantify_with_vars(
+    expr: &Expr,
+    quantified: &[String],
+    kind: Quantifier,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    vars: &[String],
+) -> Result<Quantified, BddError> {
+    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     for name in quantified {
-        if !all.iter().any(|v| v == name) {
+        if !vars.iter().any(|v| v == name) {
             return Err(BddError::UnknownVariable(name.clone()));
         }
     }
-    let free: Vec<String> = all
+    let free: Vec<String> = vars
         .iter()
         .filter(|v| !quantified.iter().any(|q| q == *v))
         .cloned()
         .collect();
-    let enc = Encoder::new(alg, &all, binary_vars, BddLimits::default())?;
+    let enc = Encoder::new(alg, vars, binary_vars, BddLimits::default())?;
     let node = enc.encode(expr)?;
     let pred = node.t.and(&node.x.not());
 

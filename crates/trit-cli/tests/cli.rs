@@ -380,3 +380,18 @@ fn verify_bdd_engine_works() {
     assert_eq!(code, 0, "stderr={stderr}");
     assert!(stdout.contains("OK"), "stdout={stdout}");
 }
+
+#[test]
+fn quantify_accepts_bdd_order() {
+    let (stdout, stderr, code) = run(&[
+        "quantify",
+        "(a & b) | (c & d)",
+        "--vars",
+        "a",
+        "--bdd-order",
+        "best",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"bdd_order\""), "{stdout}");
+}

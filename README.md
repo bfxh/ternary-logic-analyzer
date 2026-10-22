@@ -150,6 +150,9 @@ BDD 节点预算默认 100 万（`BddLimits::default()`），任何一次构造�
 
 ## 量化（`trit quantify`）
 
+`--bdd-order` 与 `equiv` 相同（appearance / reverse / frequency / frequency-asc / best）；
+`best` 试四种排序取量化 BDD 节点最少者，JSON 里输出 `bdd_order`。
+
 对三值变量做存在/全称量化。量化的对象是 **trit**（`{0,1,X}`），不是两根布尔导轨：
 
 - `∃x. f`：存在某个合法 trit 取值使 `f` **确定为 True**；
