@@ -37,6 +37,34 @@ pub enum BddError {
     /// 表达式超出资源预算。
     #[error("表达式超出预算: {0}")]
     Limit(String),
+    /// 单个 BDD 的节点数超出预算。
+    #[error("BDD 节点数超过上限 {limit}")]
+    BudgetExceeded {
+        /// 上限。
+        limit: usize,
+    },
+}
+
+/// BDD 节点预算。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BddLimits {
+    /// 单个 BDD 允许的最大节点数（`Bdd::size`）。
+    pub max_nodes: usize,
+}
+
+impl Default for BddLimits {
+    fn default() -> Self {
+        Self {
+            max_nodes: 1_000_000,
+        }
+    }
+}
+
+impl BddLimits {
+    /// 不设上限。
+    pub const UNLIMITED: Self = Self {
+        max_nodes: usize::MAX,
+    };
 }
 
 /// BDD 判定结果，附带差集 BDD 的节点数。
@@ -157,10 +185,16 @@ struct Encoder {
     alg: Algebra,
     false_bdd: Bdd,
     true_bdd: Bdd,
+    limits: BddLimits,
 }
 
 impl Encoder {
-    fn new(alg: Algebra, vars: &[String], binary_vars: &HashSet<String>) -> Result<Self, BddError> {
+    fn new(
+        alg: Algebra,
+        vars: &[String],
+        binary_vars: &HashSet<String>,
+        limits: BddLimits,
+    ) -> Result<Self, BddError> {
         let mut names: Vec<String> = Vec::with_capacity(vars.len() * 2);
         for var in vars {
             names.push(format!("{var}#t"));
@@ -204,12 +238,23 @@ impl Encoder {
             alg,
             false_bdd,
             true_bdd,
+            limits,
         })
     }
 
-    fn encode(&self, expr: &Expr) -> Node {
+    fn guard(&self, bdd: Bdd) -> Result<Bdd, BddError> {
+        if bdd.size() > self.limits.max_nodes {
+            Err(BddError::BudgetExceeded {
+                limit: self.limits.max_nodes,
+            })
+        } else {
+            Ok(bdd)
+        }
+    }
+
+    fn encode(&self, expr: &Expr) -> Result<Node, BddError> {
         let alg = self.alg;
-        match expr {
+        Ok(match expr {
             Expr::Const(value) => match value {
                 Ternary::False => Node {
                     t: self.false_bdd.clone(),
@@ -229,15 +274,15 @@ impl Encoder {
             },
             Expr::Var(name) => self.vars[name].clone(),
             Expr::Not(a) => {
-                let a = self.encode(a);
+                let a = self.encode(a)?;
                 if a.binary {
                     Node {
-                        t: a.t.not(),
+                        t: self.guard(a.t.not())?,
                         x: self.false_bdd.clone(),
                         binary: true,
                     }
                 } else {
-                    let (t, x) = self.table(&[a], |v| alg.not(v[0]));
+                    let (t, x) = self.table(&[a], |v| alg.not(v[0]))?;
                     Node {
                         t,
                         x,
@@ -245,23 +290,25 @@ impl Encoder {
                     }
                 }
             }
-            Expr::And(a, b) => self.binary_op(a, b, |x, y| x.and(y), |v| alg.and(v[0], v[1])),
-            Expr::Or(a, b) => self.binary_op(a, b, |x, y| x.or(y), |v| alg.or(v[0], v[1])),
+            Expr::And(a, b) => self.binary_op(a, b, |x, y| x.and(y), |v| alg.and(v[0], v[1]))?,
+            Expr::Or(a, b) => self.binary_op(a, b, |x, y| x.or(y), |v| alg.or(v[0], v[1]))?,
             Expr::Xor(a, b) => {
                 // 二值操作数上 `⊕` 不是经典异或：K3/B3 是 `∧`，Ł3 是 `∨`。
                 let ternary = |v: &[Ternary]| alg.strong_add(v[0], v[1]);
                 match alg {
-                    Algebra::Lukasiewicz => self.binary_op(a, b, |x, y| x.or(y), ternary),
+                    Algebra::Lukasiewicz => self.binary_op(a, b, |x, y| x.or(y), ternary)?,
                     Algebra::Kleene | Algebra::Bochvar => {
-                        self.binary_op(a, b, |x, y| x.and(y), ternary)
+                        self.binary_op(a, b, |x, y| x.and(y), ternary)?
                     }
                 }
             }
             Expr::Implies(a, b) => {
-                self.binary_op(a, b, |x, y| x.not().or(y), |v| alg.implies(v[0], v[1]))
+                self.binary_op(a, b, |x, y| x.not().or(y), |v| alg.implies(v[0], v[1]))?
             }
-            Expr::Equiv(a, b) => self.binary_op(a, b, |x, y| x.iff(y), |v| alg.equiv(v[0], v[1])),
-        }
+            Expr::Equiv(a, b) => {
+                self.binary_op(a, b, |x, y| x.iff(y), |v| alg.equiv(v[0], v[1]))?
+            }
+        })
     }
 
     fn binary_op(
@@ -270,27 +317,31 @@ impl Encoder {
         b: &Expr,
         binary: impl Fn(&Bdd, &Bdd) -> Bdd,
         ternary: impl Fn(&[Ternary]) -> Ternary,
-    ) -> Node {
-        let a = self.encode(a);
-        let b = self.encode(b);
+    ) -> Result<Node, BddError> {
+        let a = self.encode(a)?;
+        let b = self.encode(b)?;
         if a.binary && b.binary {
-            Node {
-                t: binary(&a.t, &b.t),
+            Ok(Node {
+                t: self.guard(binary(&a.t, &b.t))?,
                 x: self.false_bdd.clone(),
                 binary: true,
-            }
+            })
         } else {
-            let (t, x) = self.table(&[a, b], ternary);
-            Node {
+            let (t, x) = self.table(&[a, b], ternary)?;
+            Ok(Node {
                 t,
                 x,
                 binary: false,
-            }
+            })
         }
     }
 
     /// 按真值表逐行构造两根输出导轨。
-    fn table(&self, ins: &[Node], f: impl Fn(&[Ternary]) -> Ternary) -> (Bdd, Bdd) {
+    fn table(
+        &self,
+        ins: &[Node],
+        f: impl Fn(&[Ternary]) -> Ternary,
+    ) -> Result<(Bdd, Bdd), BddError> {
         let mut t = self.false_bdd.clone();
         let mut x = self.false_bdd.clone();
         let combos = 3usize.pow(ins.len() as u32);
@@ -311,27 +362,27 @@ impl Encoder {
                     Ternary::True => node.t.and(&node.x.not()),
                     Ternary::Unknown => node.t.not().and(&node.x),
                 };
-                condition = condition.and(&bit);
+                condition = self.guard(condition.and(&bit))?;
             }
             match f(&values) {
                 Ternary::False => {}
-                Ternary::True => t = t.or(&condition),
-                Ternary::Unknown => x = x.or(&condition),
+                Ternary::True => t = self.guard(t.or(&condition))?,
+                Ternary::Unknown => x = self.guard(x.or(&condition))?,
             }
         }
-        (t, x)
+        Ok((t, x))
     }
 
     /// 所有三值变量的 `¬(t ∧ x)`。
-    fn valid(&self) -> Bdd {
+    fn valid(&self) -> Result<Bdd, BddError> {
         let mut valid = self.true_bdd.clone();
         for node in self.vars.values() {
             if !node.binary {
-                let ok = node.t.not().or(&node.x.not());
-                valid = valid.and(&ok);
+                let ok = self.guard(node.t.not().or(&node.x.not()))?;
+                valid = self.guard(valid.and(&ok))?;
             }
         }
-        valid
+        Ok(valid)
     }
 }
 
@@ -362,7 +413,20 @@ pub fn equivalent_bdd(
 ) -> Result<BddVerdict, BddError> {
     check_pair(a, b)?;
     let vars = union_vars(a, b);
-    verdict_with_vars(a, b, alg, binary_vars, &vars)
+    verdict_with_vars(a, b, alg, binary_vars, &vars, BddLimits::default())
+}
+
+/// 同 [`equivalent_bdd`]，但可指定 BDD 节点预算。
+pub fn equivalent_bdd_with_limits(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    limits: BddLimits,
+) -> Result<BddVerdict, BddError> {
+    check_pair(a, b)?;
+    let vars = union_vars(a, b);
+    verdict_with_vars(a, b, alg, binary_vars, &vars, limits)
 }
 
 /// 用指定变量顺序判定；顺序里缺失的变量按首次出现顺序补在末尾。
@@ -386,7 +450,7 @@ pub fn equivalent_bdd_with_order(
             vars.push(name);
         }
     }
-    verdict_with_vars(a, b, alg, binary_vars, &vars)
+    verdict_with_vars(a, b, alg, binary_vars, &vars, BddLimits::default())
 }
 
 /// 试四种静态排序，取差集 BDD 节点数最少者；平局保留先出现者。
@@ -397,6 +461,7 @@ pub fn equivalent_bdd_best(
     binary_vars: &HashSet<String>,
 ) -> Result<(BddVerdict, VarOrder), BddError> {
     check_pair(a, b)?;
+    let limits = BddLimits::default();
     let mut best: Option<(BddVerdict, VarOrder)> = None;
     for order in [
         VarOrder::Appearance,
@@ -405,7 +470,7 @@ pub fn equivalent_bdd_best(
         VarOrder::FrequencyAsc,
     ] {
         let vars = order_variables(a, b, order);
-        let verdict = verdict_with_vars(a, b, alg, binary_vars, &vars)?;
+        let verdict = verdict_with_vars(a, b, alg, binary_vars, &vars, limits)?;
         if best
             .as_ref()
             .is_none_or(|(current, _)| verdict.nodes < current.nodes)
@@ -429,12 +494,13 @@ fn verdict_with_vars(
     alg: Algebra,
     binary_vars: &HashSet<String>,
     vars: &[String],
+    limits: BddLimits,
 ) -> Result<BddVerdict, BddError> {
-    let enc = Encoder::new(alg, vars, binary_vars)?;
-    let ra = enc.encode(a);
-    let rb = enc.encode(b);
-    let equal = ra.t.iff(&rb.t).and(&ra.x.iff(&rb.x));
-    let diff = enc.valid().and(&equal.not());
+    let enc = Encoder::new(alg, vars, binary_vars, limits)?;
+    let ra = enc.encode(a)?;
+    let rb = enc.encode(b)?;
+    let equal = enc.guard(ra.t.iff(&rb.t).and(&ra.x.iff(&rb.x)))?;
+    let diff = enc.guard(enc.valid()?.and(&equal.not()))?;
     if diff.is_false() {
         return Ok(BddVerdict {
             result: EquivalenceResult {
@@ -471,10 +537,10 @@ pub fn satisfiable_bdd(
 ) -> Result<Option<Assignment>, BddError> {
     check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     let vars = expr.variables();
-    let enc = Encoder::new(alg, &vars, binary_vars)?;
-    let node = enc.encode(expr);
+    let enc = Encoder::new(alg, &vars, binary_vars, BddLimits::default())?;
+    let node = enc.encode(expr)?;
     // 必须限定在合法三值域内：非法导轨 (1,1) 可能被 table 解释成 False，再被 Not 变成 True。
-    let sat = enc.valid().and(&node.t).and(&node.x.not());
+    let sat = enc.guard(enc.valid()?.and(&node.t).and(&node.x.not()))?;
     if sat.is_false() {
         return Ok(None);
     }
@@ -514,10 +580,10 @@ pub fn premise_counterexample_bdd(
             vars.push(v);
         }
     }
-    let enc = Encoder::new(alg, &vars, binary_vars)?;
-    let p = enc.encode(premise);
-    let a = enc.encode(assertion);
-    let bad = enc.valid().and(&p.t).and(&p.x.not()).and(&a.t.not());
+    let enc = Encoder::new(alg, &vars, binary_vars, BddLimits::default())?;
+    let p = enc.encode(premise)?;
+    let a = enc.encode(assertion)?;
+    let bad = enc.guard(enc.valid()?.and(&p.t).and(&p.x.not()).and(&a.t.not()))?;
     let nodes = bad.size();
     let Some(valuation) = bad.sat_valuations().next() else {
         return Ok(PremiseCheck {
@@ -650,8 +716,8 @@ pub fn quantify_bdd(
         .filter(|v| !quantified.iter().any(|q| q == *v))
         .cloned()
         .collect();
-    let enc = Encoder::new(alg, &all, binary_vars)?;
-    let node = enc.encode(expr);
+    let enc = Encoder::new(alg, &all, binary_vars, BddLimits::default())?;
+    let node = enc.encode(expr)?;
     let pred = node.t.and(&node.x.not());
 
     let mut q_rails = Vec::new();
@@ -662,14 +728,14 @@ pub fn quantify_bdd(
         if let Some(x_var) = x_var {
             q_rails.push(x_var);
             let n = &enc.vars[name];
-            valid_q = valid_q.and(&n.t.not().or(&n.x.not()));
+            valid_q = enc.guard(valid_q.and(&n.t.not().or(&n.x.not())))?;
         }
     }
     let mut valid_free = enc.true_bdd.clone();
     for name in &free {
         let n = &enc.vars[name];
         if !n.binary {
-            valid_free = valid_free.and(&n.t.not().or(&n.x.not()));
+            valid_free = enc.guard(valid_free.and(&n.t.not().or(&n.x.not())))?;
         }
     }
 
@@ -679,7 +745,7 @@ pub fn quantify_bdd(
         Quantifier::Forall => valid_q.and(&pred.not()).exists(&q_rails).not(),
     };
     Ok(Quantified {
-        bdd: quantified_bdd.and(&valid_free),
+        bdd: enc.guard(quantified_bdd.and(&valid_free))?,
         valid_free,
         free,
         varids: enc.varids,

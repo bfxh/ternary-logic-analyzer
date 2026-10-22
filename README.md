@@ -144,6 +144,9 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 变量顺序可用 `--bdd-order` 选：`appearance`（默认）、`reverse`、`frequency`、`frequency-asc`、
 `best`（试四种取差集 BDD 节点最少者）。`--stats` 会打印所选顺序与节点数。
+BDD 节点预算默认 100 万（`BddLimits::default()`），任何一次构造超过上限即返回
+`BddError::BudgetExceeded`，不会无限膨胀；库调用可用 `equivalent_bdd_with_limits` 收紧或
+`BddLimits::UNLIMITED` 关闭。
 
 ## 量化（`trit quantify`）
 

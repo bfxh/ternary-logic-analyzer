@@ -120,6 +120,14 @@ MUTANTS = [
         "filter": "minimum_cover_matches_bruteforce",
     },
     {
+        "name": "bdd: 节点预算永不触发",
+        "file": "crates/trit-bdd/src/lib.rs",
+        "old": "        if bdd.size() > self.limits.max_nodes {",
+        "new": "        if false {",
+        "pkg": "trit-bdd",
+        "filter": "budget_rejects",
+    },
+    {
         "name": "bdd: 频率降序写反",
         "file": "crates/trit-bdd/src/lib.rs",
         "old": "                    cr.cmp(&cl)",
@@ -138,8 +146,8 @@ MUTANTS = [
     {
         "name": "bdd: satisfiable 不限制合法域",
         "file": "crates/trit-bdd/src/lib.rs",
-        "old": "    let sat = enc.valid().and(&node.t).and(&node.x.not());",
-        "new": "    let sat = node.t.and(&node.x.not());",
+        "old": "    let sat = enc.guard(enc.valid()?.and(&node.t).and(&node.x.not()))?;",
+        "new": "    let sat = enc.guard(node.t.and(&node.x.not()))?;",
         "pkg": "trit-bdd",
         "filter": "satisfiable_requires_a_legal_valuation",
     },
