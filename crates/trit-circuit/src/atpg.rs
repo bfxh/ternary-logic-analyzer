@@ -148,6 +148,13 @@ mod tests {
         assert_eq!(report.faults.len(), 6);
         assert_eq!(report.testable, 2, "BUF 的两个极性可测，AND 的四个不可测");
         assert_eq!(report.untestable.len(), 4);
+        assert!(
+            report
+                .untestable
+                .iter()
+                .all(|f| f.reason == Some(crate::circuit::UntestableReason::Unobserved)),
+            "AND 的门输出到不了主输出"
+        );
         assert!((report.coverage - 2.0 / 6.0).abs() < 1e-9);
     }
 

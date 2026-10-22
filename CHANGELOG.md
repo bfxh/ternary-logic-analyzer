@@ -6,7 +6,9 @@
 
 - `trit atpg <netlist>` 与 `trit_circuit::generate_tests`：门引脚 stuck-at 的测试向量生成
   （贪心集合覆盖）+ 覆盖率报告。
-- `Fault::witness`（首个二进制区分向量）与 `Circuit::decode_binary`。
+- `Fault::witness`（首个二进制区分向量）、`Fault::reason` 与 `Circuit::decode_binary`。
+- 不可测原因分类：`redundant` / `unobserved` / `masked`，`trit circuit` 与 `trit atpg` 的
+  table/JSON 都会输出。
 
 ### Changed
 

@@ -104,6 +104,14 @@ MUTANTS = [
         "filter": "atpg",
     },
     {
+        "name": "circuit: 不可观测误判为被遮蔽",
+        "file": "crates/trit-circuit/src/circuit.rs",
+        "old": "                } else if reachable.contains(gate.output.name()) {",
+        "new": "                } else if true {",
+        "pkg": "trit-circuit",
+        "filter": "untestable_reasons",
+    },
+    {
         "name": "bdd: is_valid 退回布尔全集",
         "file": "crates/trit-bdd/src/lib.rs",
         "old": "        self.bdd.not().and(&self.valid_free).is_false()",

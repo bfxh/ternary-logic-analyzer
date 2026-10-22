@@ -6,5 +6,5 @@ pub mod circuit;
 pub use atpg::{AtpgReport, TestPattern, generate_tests};
 pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
-    SimulationRow, analyze, propagate,
+    SimulationRow, UntestableReason, analyze, propagate,
 };

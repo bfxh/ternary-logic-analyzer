@@ -168,6 +168,28 @@ impl Gate {
 /// 门输出与输入信号构成的一对（用于冗余输入 / 不可测故障报告）。
 pub type GateSignalPair = (String, String);
 
+/// 不可测故障的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntestableReason {
+    /// 固定该引脚不会改变本门输出。
+    Redundant,
+    /// 本门输出到不了任何主输出。
+    Unobserved,
+    /// 能到主输出，但被其他信号遮蔽。
+    Masked,
+}
+
+impl UntestableReason {
+    /// 稳定短名。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Redundant => "redundant",
+            Self::Unobserved => "unobserved",
+            Self::Masked => "masked",
+        }
+    }
+}
+
 /// 一个门引脚上的 stuck-at 故障。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fault {
@@ -183,6 +205,8 @@ pub struct Fault {
     pub observable: bool,
     /// 首个能区分故障与正常的**二进制**输入向量（bit i = 第 i 个主输入）；不可测时为 `None`。
     pub witness: Option<u64>,
+    /// 不可测原因；可测时为 `None`。
+    pub reason: Option<UntestableReason>,
 }
 
 /// 故障分析结果：冗余引脚列表与逐极性故障列表。
@@ -634,6 +658,31 @@ fn is_acyclic(circuit: &Circuit) -> bool {
 /// - 可观测：存在一个二进制向量能让某个主输出与正常值不同（`witness` 记首个）。
 ///
 /// X 输入不是物理测试向量，因此不计入可测性判定。
+fn reachable_signals(circuit: &Circuit) -> BTreeSet<String> {
+    let mut reachable: BTreeSet<String> = circuit
+        .outputs
+        .iter()
+        .map(|s| s.name().to_string())
+        .collect();
+    loop {
+        let mut changed = false;
+        for gate in &circuit.gates {
+            if !reachable.contains(gate.output.name()) {
+                continue;
+            }
+            for input in &gate.inputs {
+                if reachable.insert(input.name().to_string()) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    reachable
+}
+
 fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, CircuitError> {
     let input_count = circuit.input_count();
     if input_count > 16 {
@@ -641,6 +690,7 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
     }
     let total = 1u64 << input_count;
     let order = topological_order(circuit)?;
+    let reachable = reachable_signals(circuit);
     let mut redundant: Vec<GateSignalPair> = Vec::new();
     let mut faults: Vec<Fault> = Vec::new();
 
@@ -655,6 +705,7 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
         for (input_index, probe) in gate.inputs.iter().enumerate() {
             let mut gate_values: [Vec<Ternary>; 2] = [Vec::new(), Vec::new()];
             let mut witness: [Option<u64>; 2] = [None, None];
+            let mut fault_ids: Vec<usize> = Vec::with_capacity(2);
             for (polarity, stuck) in [Ternary::False, Ternary::True].into_iter().enumerate() {
                 for mask in 0..total {
                     let injected = simulate_binary_with_fault(
@@ -682,6 +733,7 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
                         witness[polarity] = Some(mask);
                     }
                 }
+                fault_ids.push(faults.len());
                 faults.push(Fault {
                     gate: gate.output.name().to_string(),
                     input: probe.name().to_string(),
@@ -689,10 +741,24 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
                     stuck_at: stuck,
                     observable: witness[polarity].is_some(),
                     witness: witness[polarity],
+                    reason: None,
                 });
             }
-            if gate_values[0] == gate_values[1] {
+            let is_redundant = gate_values[0] == gate_values[1];
+            if is_redundant {
                 redundant.push((gate.output.name().to_string(), probe.name().to_string()));
+            }
+            for id in fault_ids {
+                if faults[id].observable {
+                    continue;
+                }
+                faults[id].reason = Some(if is_redundant {
+                    UntestableReason::Redundant
+                } else if reachable.contains(gate.output.name()) {
+                    UntestableReason::Masked
+                } else {
+                    UntestableReason::Unobserved
+                });
             }
         }
     }
@@ -1142,5 +1208,72 @@ mod tests {
             .expect("应有 SA-1");
         assert!(sa0.observable, "把常 1 拉到 0 会改变输出");
         assert!(!sa1.observable, "该引脚本来就是 1，SA-1 无变化");
+    }
+
+    #[test]
+    fn untestable_reasons_classify_three_cases() {
+        // 1) 输出到不了主输出
+        let mut dead = Circuit::new("dead");
+        dead.add_input(sig("a"));
+        dead.add_input(sig("b"));
+        dead.add_gate(Gate::new(GateKind::And, vec![sig("a"), sig("b")], sig("n")));
+        dead.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("out")));
+        dead.add_output(sig("out"));
+        let r = analyze(&dead, Algebra::Kleene).unwrap();
+        let unobserved = r
+            .faults
+            .iter()
+            .find(|f| f.gate == "n" && f.input == "a" && f.stuck_at == Ternary::False)
+            .unwrap();
+        assert_eq!(unobserved.reason, Some(UntestableReason::Unobserved));
+
+        // 2) 能到主输出但被常 1 的 OR 遮蔽
+        let mut masked = Circuit::new("masked");
+        masked.add_input(sig("a"));
+        masked.add_input(sig("b"));
+        masked.add_gate(Gate::constant(Ternary::True, sig("one")));
+        masked.add_gate(Gate::new(GateKind::And, vec![sig("a"), sig("b")], sig("n")));
+        masked.add_gate(Gate::new(
+            GateKind::Or,
+            vec![sig("n"), sig("one")],
+            sig("y"),
+        ));
+        masked.add_output(sig("y"));
+        let r = analyze(&masked, Algebra::Kleene).unwrap();
+        let masked_fault = r
+            .faults
+            .iter()
+            .find(|f| f.gate == "n" && f.input == "a" && f.stuck_at == Ternary::False)
+            .unwrap();
+        assert_eq!(masked_fault.reason, Some(UntestableReason::Masked));
+
+        // 3) 固定引脚不改变门输出
+        let mut redundant = Circuit::new("redundant");
+        redundant.add_gate(Gate::constant(Ternary::True, sig("one")));
+        redundant.add_gate(Gate::constant(Ternary::False, sig("zero")));
+        redundant.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig("one"), sig("zero")],
+            sig("y"),
+        ));
+        redundant.add_output(sig("y"));
+        let r = analyze(&redundant, Algebra::Kleene).unwrap();
+        let count =
+            |reason: UntestableReason| r.faults.iter().filter(|f| f.reason == Some(reason)).count();
+        assert_eq!(
+            count(UntestableReason::Redundant),
+            2,
+            "one 引脚两个极性都不改变输出"
+        );
+        assert_eq!(
+            count(UntestableReason::Masked),
+            1,
+            "zero 引脚的 SA-0 与正常值相同"
+        );
+        assert_eq!(
+            r.faults.iter().filter(|f| f.observable).count(),
+            1,
+            "zero 引脚的 SA-1 可测"
+        );
     }
 }

@@ -958,6 +958,8 @@ fn cmd_circuit(
                         "input_index": f.input_index,
                         "stuck_at": f.stuck_at.as_char().to_string(),
                         "observable": f.observable,
+                        "witness": f.witness,
+                        "reason": f.reason.map(|r| r.as_str()),
                     }))
                     .collect::<Vec<_>>(),
                 "output_domains": report.output_domains
@@ -1002,11 +1004,12 @@ fn cmd_circuit(
                 println!("\n不可测故障（stuck-at 无法观测）：");
                 for fault in untestable {
                     println!(
-                        "  门 {} 的输入 {}[{}] stuck-at {}",
+                        "  门 {} 的输入 {}[{}] stuck-at {}（{}）",
                         fault.gate,
                         fault.input,
                         fault.input_index,
-                        fault.stuck_at.as_char()
+                        fault.stuck_at.as_char(),
+                        fault.reason.map(|r| r.as_str()).unwrap_or("unknown")
                     );
                 }
             }
@@ -1059,6 +1062,7 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                         "input": f.input,
                         "input_index": f.input_index,
                         "stuck_at": f.stuck_at.as_char().to_string(),
+                        "reason": f.reason.map(|r| r.as_str()),
                     }))
                     .collect::<Vec<_>>(),
             });
@@ -1085,11 +1089,12 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                 println!("\n不可测故障（{} 个）：", report.untestable.len());
                 for fault in &report.untestable {
                     println!(
-                        "  门 {} 的输入 {}[{}] stuck-at {}",
+                        "  门 {} 的输入 {}[{}] stuck-at {}（{}）",
                         fault.gate,
                         fault.input,
                         fault.input_index,
-                        fault.stuck_at.as_char()
+                        fault.stuck_at.as_char(),
+                        fault.reason.map(|r| r.as_str()).unwrap_or("unknown")
                     );
                 }
             }
