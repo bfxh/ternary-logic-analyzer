@@ -43,8 +43,8 @@ fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "timing", "check",
-        "netlist", "belnap", "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "timing", "map",
+        "check", "netlist", "belnap", "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }
@@ -574,4 +574,13 @@ fn check_passes_with_slack_and_coverage() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("PASS"), "{stdout}");
     assert!(stdout.contains("ATPG：覆盖率 100.0%"), "{stdout}");
+}
+
+#[test]
+fn map_lowers_to_nand_only() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (stdout, stderr, code) = run(&["map", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate NAND"), "{stdout}");
+    assert!(!stdout.contains("gate AND"), "{stdout}");
 }

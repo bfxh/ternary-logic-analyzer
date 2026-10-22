@@ -127,7 +127,12 @@ impl Builder<'_> {
     }
 }
 
-fn translate_assign(rhs: &str) -> String {
+fn translate_assign(rhs: &str) -> Result<String, VerilogError> {
+    if rhs.contains('^') {
+        return Err(message(
+            "暂不支持 ^ / xor：trit 的 ⊕ 是强加，不是 Verilog 布尔异或",
+        ));
+    }
     let mut text = rhs.replace("&&", "&").replace("||", "|");
     for (from, to) in [
         ("1'b0", "0"),
@@ -139,7 +144,7 @@ fn translate_assign(rhs: &str) -> String {
     ] {
         text = text.replace(from, to);
     }
-    text
+    Ok(text)
 }
 
 fn split_list(text: &str) -> Vec<String> {
@@ -279,7 +284,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 if !is_identifier(lhs) {
                     return Err(message(format!("非法 assign 目标 {lhs:?}")));
                 }
-                let expr = Parser::parse(&translate_assign(rhs.trim()))
+                let expr = Parser::parse(&translate_assign(rhs.trim())?)
                     .map_err(|e| message(format!("assign 表达式解析失败：{e}")))?;
                 let mut builder = Builder {
                     circuit: &mut circuit,
@@ -292,7 +297,12 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 };
                 builder.synth(&expr, lhs)?;
             }
-            "and" | "or" | "nand" | "nor" | "xor" | "xnor" | "not" | "buf" => {
+            "xor" | "xnor" => {
+                return Err(message(
+                    "暂不支持 xor/xnor：trit 的 ⊕ 是强加，不是 Verilog 布尔异或",
+                ));
+            }
+            "and" | "or" | "nand" | "nor" | "not" | "buf" => {
                 let normalized = statement
                     .replace('(', " ( ")
                     .replace(')', " ) ")

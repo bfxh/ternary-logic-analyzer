@@ -203,6 +203,17 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 技术映射：把组合网表降到 NAND（+ 常量）。
+    Map {
+        /// 网表文件路径。
+        path: std::path::PathBuf,
+        /// 输入格式：`text`（默认）/ `json` / `verilog`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        from: String,
+        /// 输出格式：`text`（默认）/ `json` / `verilog`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        to: String,
+    },
     /// 设计检查：结构 + 时序 + X 传播 + ATPG 覆盖率（一条命令）。
     Check {
         /// 网表文件路径。
@@ -379,6 +390,7 @@ fn main() -> Result<()> {
             paths,
             format,
         ),
+        Commands::Map { path, from, to } => cmd_map(&path, &from, &to),
         Commands::Check {
             path,
             from,
@@ -1258,6 +1270,20 @@ fn cmd_circuit(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// `map` 子命令：降到 NAND-only。
+fn cmd_map(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
+    let circuit = load_circuit(path, from)?;
+    let mapped = trit_circuit::to_nand_only(&circuit)
+        .with_context(|| format!("映射失败：{}", path.display()))?;
+    match to {
+        "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)),
+        "json" => println!("{}", trit_circuit::netlist::to_json(&mapped)?),
+        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&mapped)),
+        other => bail!("未知输出格式 {other:?}，可选 text / json / verilog"),
     }
     Ok(())
 }

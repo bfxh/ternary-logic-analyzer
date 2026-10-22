@@ -126,6 +126,14 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 删掉后若仍可相等就必须保留。得到的是**充分**部分反例——未列出的变量在各自域内任取，两边仍不相等；
 不会退化成“只保证存在某个补全”的空反例。
 
+## 技术映射（`trit map`）
+
+把 AND/OR/NAND/NOR/NOT/BUF 降到 NAND + 常量。三值强加 `Xor` 需要 X 检测单元，明确拒绝。
+
+```bash
+trit map design.net --to verilog
+```
+
 ## 设计检查（`trit check`）
 
 一条命令跑：结构校验 → 时序（关键路径/违例）→ X 传播统计 → ATPG 覆盖率；
