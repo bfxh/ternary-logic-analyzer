@@ -47,7 +47,16 @@ pub enum ParseError {
     /// 表达式为空。
     #[error("表达式为空")]
     Empty,
+    /// 嵌套过深。
+    #[error("表达式嵌套超过 {limit} 层")]
+    TooDeep {
+        /// 允许的最大嵌套层数。
+        limit: usize,
+    },
 }
+
+/// 嵌套深度上限：防止深括号/长 Not 链把递归下降打爆栈。
+pub const MAX_DEPTH: usize = 256;
 
 /// 递归下降解析器。
 pub struct Parser {
@@ -55,6 +64,7 @@ pub struct Parser {
     pos: usize,
     line: usize,
     column: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -65,6 +75,7 @@ impl Parser {
             pos: 0,
             line: 1,
             column: 1,
+            depth: 0,
         }
     }
 
@@ -193,6 +204,17 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            self.depth -= 1;
+            return Err(ParseError::TooDeep { limit: MAX_DEPTH });
+        }
+        let result = self.parse_unary_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_unary_inner(&mut self) -> Result<Expr, ParseError> {
         self.skip_ws();
         if self.eat_op(&["!", "~", "¬"]) {
             let inner = self.parse_unary()?;
@@ -378,5 +400,16 @@ mod tests {
     #[test]
     fn reports_empty() {
         assert_eq!(Parser::parse("   ").unwrap_err(), ParseError::Empty);
+    }
+
+    #[test]
+    fn rejects_excessive_nesting() {
+        let deep = format!("{}a", "!".repeat(MAX_DEPTH + 1));
+        assert!(matches!(
+            Parser::parse(&deep).unwrap_err(),
+            ParseError::TooDeep { .. }
+        ));
+        let ok = format!("{}a", "!".repeat(MAX_DEPTH - 1));
+        assert!(Parser::parse(&ok).is_ok());
     }
 }

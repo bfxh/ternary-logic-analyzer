@@ -168,8 +168,23 @@ impl Gate {
 /// 门输出与输入信号构成的一对（用于冗余输入 / 不可测故障报告）。
 pub type GateSignalPair = (String, String);
 
-/// 故障分析结果：冗余输入列表与不可测故障列表。
-pub type FaultReport = (Vec<GateSignalPair>, Vec<GateSignalPair>);
+/// 一个门引脚上的 stuck-at 故障。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fault {
+    /// 门输出（用于定位门）。
+    pub gate: String,
+    /// 该引脚的输入信号。
+    pub input: String,
+    /// 输入序号（同一信号可以接多个引脚）。
+    pub input_index: usize,
+    /// 故障值：`False` = stuck-at-0，`True` = stuck-at-1。
+    pub stuck_at: Ternary,
+    /// 是否能被任一主输出观测到。
+    pub observable: bool,
+}
+
+/// 故障分析结果：冗余引脚列表与逐极性故障列表。
+pub type FaultReport = (Vec<GateSignalPair>, Vec<Fault>);
 
 /// 一个电路。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -250,8 +265,8 @@ pub struct CircuitReport {
     pub unknown_output_combinations: u64,
     /// 冗余输入：`(门输出, 输入信号)`，该输入翻转不改变输出。
     pub redundant_inputs: Vec<GateSignalPair>,
-    /// 不可测故障：`(门输出, 输入信号)`，该输入的 stuck-at 故障无法被观测。
-    pub untestable_faults: Vec<GateSignalPair>,
+    /// 逐引脚、逐极性的 stuck-at 故障（含不可测项）。
+    pub faults: Vec<Fault>,
     /// 每个主输出的可达取值集合。
     pub output_domains: BTreeMap<String, BTreeSet<Ternary>>,
 }
@@ -349,7 +364,7 @@ pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, Circuit
         }
     }
 
-    let (redundant, untestable) = detect_input_faults(circuit, alg)?;
+    let (redundant, faults) = detect_faults(circuit, alg)?;
 
     Ok(CircuitReport {
         circuit: circuit.name.clone(),
@@ -359,7 +374,7 @@ pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, Circuit
         gate_count: circuit.gates.len(),
         unknown_output_combinations: unknown_outputs,
         redundant_inputs: redundant,
-        untestable_faults: untestable,
+        faults,
         output_domains,
     })
 }
@@ -590,71 +605,75 @@ fn is_acyclic(circuit: &Circuit) -> bool {
     visited == nodes.len()
 }
 
-/// 逐个输入做 stuck-at 故障注入，判定冗余与不可测故障。
+/// 逐个**门引脚**做 stuck-at 故障注入，分别判定冗余与每个极性的可观测性。
 ///
-/// 采用标准定义：
-///
-/// - **冗余输入**（冗余门）：把该输入固定为 0 与固定为 1 时，本门输出
-///   完全相同 ⇒ 该输入对本门无影响，可从电路中删除。
-/// - **不可测故障**：该输入的 stuck-at 故障在**所有**主输入组合下都不改变
-///   任何主输出 ⇒ 故障无法被外部观测到。
-///
-/// 返回 `(冗余输入列表, 不可测故障列表)`，每项为 `(门输出, 输入信号)`。
-fn detect_input_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, CircuitError> {
+/// 故障模型是 gate-pin：只替换该门该输入引脚上的取值，不覆盖整条共享信号。
+/// 冗余引脚：固定为 0 与固定为 1 时本门输出在所有组合下都相同。
+fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, CircuitError> {
     let total = circuit.combination_count();
     let order = topological_order(circuit)?;
     let mut redundant: Vec<GateSignalPair> = Vec::new();
-    let mut untestable: Vec<GateSignalPair> = Vec::new();
+    let mut faults: Vec<Fault> = Vec::new();
 
-    for gate in &circuit.gates {
+    let base: Vec<BTreeMap<String, Ternary>> = (0..total)
+        .map(|combo| simulate_combo(circuit, combo, alg, &order))
+        .collect();
+
+    for (gate_index, gate) in circuit.gates.iter().enumerate() {
         if gate.kind == GateKind::Const {
             continue;
         }
-        for probe in &gate.inputs {
-            // 直接做法：对该输入分别注入 stuck-at-0 与 stuck-at-1，比较本门输出
-            let mut gate_out_same = true;
-            let mut observable_any = false;
-            for combo in 0..total {
-                let base = simulate_combo(circuit, combo, alg, &order);
-                let base_out = base
-                    .get(gate.output.name())
-                    .copied()
-                    .unwrap_or(Ternary::Unknown);
-                let base_outs: Vec<Ternary> = circuit
-                    .outputs
-                    .iter()
-                    .map(|o| base.get(o.name()).copied().unwrap_or(Ternary::Unknown))
-                    .collect();
-
-                for stuck in [Ternary::False, Ternary::True] {
-                    let injected =
-                        simulate_with_fault(circuit, combo, alg, Some((probe, stuck)), &order);
-                    let inj_out = injected
-                        .get(gate.output.name())
-                        .copied()
-                        .unwrap_or(Ternary::Unknown);
-                    if inj_out != base_out {
-                        gate_out_same = false;
-                    }
+        for (input_index, probe) in gate.inputs.iter().enumerate() {
+            let mut gate_values: [Vec<Ternary>; 2] = [Vec::new(), Vec::new()];
+            let mut observable = [false, false];
+            for (polarity, stuck) in [Ternary::False, Ternary::True].into_iter().enumerate() {
+                for combo in 0..total {
+                    let injected = simulate_with_fault(
+                        circuit,
+                        combo,
+                        alg,
+                        Some((gate_index, input_index, stuck)),
+                        &order,
+                    );
+                    gate_values[polarity].push(
+                        injected
+                            .get(gate.output.name())
+                            .copied()
+                            .unwrap_or(Ternary::Unknown),
+                    );
+                    let base_outs: Vec<Ternary> = circuit
+                        .outputs
+                        .iter()
+                        .map(|o| {
+                            base[combo as usize]
+                                .get(o.name())
+                                .copied()
+                                .unwrap_or(Ternary::Unknown)
+                        })
+                        .collect();
                     let inj_outs: Vec<Ternary> = circuit
                         .outputs
                         .iter()
                         .map(|o| injected.get(o.name()).copied().unwrap_or(Ternary::Unknown))
                         .collect();
                     if inj_outs != base_outs {
-                        observable_any = true;
+                        observable[polarity] = true;
                     }
                 }
+                faults.push(Fault {
+                    gate: gate.output.name().to_string(),
+                    input: probe.name().to_string(),
+                    input_index,
+                    stuck_at: stuck,
+                    observable: observable[polarity],
+                });
             }
-            if gate_out_same {
+            if gate_values[0] == gate_values[1] {
                 redundant.push((gate.output.name().to_string(), probe.name().to_string()));
-            }
-            if !observable_any {
-                untestable.push((gate.output.name().to_string(), probe.name().to_string()));
             }
         }
     }
-    Ok((redundant, untestable))
+    Ok((redundant, faults))
 }
 
 /// 计算门的拓扑序（门索引列表）。
@@ -711,15 +730,13 @@ fn simulate_combo(
 
 /// 模拟电路并注入一个 stuck-at 故障。
 ///
-/// `fault` 为 `Some((信号, 取值))` 时，该信号的取值被强制为给定值：
-/// - 若该信号是主输入，直接覆盖主输入取值；
-/// - 若该信号由门驱动，则在**驱动点**覆盖（该门的计算结果被替换），
-///   故障随后沿拓扑序向下游传播。
+/// `fault` 为 `Some((门索引, 输入序号, 取值))`：只替换该门该输入引脚上的值，
+/// 不覆盖整条共享信号，因此不会影响同一信号的其他扇出。
 fn simulate_with_fault(
     circuit: &Circuit,
     combo: u64,
     alg: Algebra,
-    fault: Option<(&Signal, Ternary)>,
+    fault: Option<(usize, usize, Ternary)>,
     order: &[usize],
 ) -> BTreeMap<String, Ternary> {
     let mut values: BTreeMap<String, Ternary> = BTreeMap::new();
@@ -734,28 +751,20 @@ fn simulate_with_fault(
         };
         values.insert(inp.name().to_string(), v);
     }
-    // 主输入上的故障：直接覆盖
-    if let Some((sig, fv)) = fault
-        && circuit.inputs.iter().any(|i| i.name() == sig.name())
-    {
-        values.insert(sig.name().to_string(), fv);
-    }
     // 按拓扑序求值
     for &idx in order {
         let gate = &circuit.gates[idx];
-        // 驱动点故障注入
-        if let Some((sig, fv)) = fault
-            && gate.output.name() == sig.name()
-            && !circuit.inputs.iter().any(|i| i.name() == sig.name())
-        {
-            values.insert(gate.output.name().to_string(), fv);
-            continue;
-        }
-        let ins: Vec<Ternary> = gate
+        let mut ins: Vec<Ternary> = gate
             .inputs
             .iter()
             .map(|s| values.get(s.name()).copied().unwrap_or(Ternary::Unknown))
             .collect();
+        if let Some((gate_index, input_index, value)) = fault
+            && gate_index == idx
+            && let Some(slot) = ins.get_mut(input_index)
+        {
+            *slot = value;
+        }
         let v = if gate.kind == GateKind::Const {
             gate.const_value.unwrap_or(Ternary::False)
         } else {
@@ -1031,5 +1040,60 @@ mod tests {
         c.add_output(sig("ghost"));
         let err = analyze(&c, Algebra::Kleene).unwrap_err();
         assert!(matches!(err, CircuitError::UndrivenSignal(ref s) if s == "ghost"));
+    }
+
+    #[test]
+    fn pin_fault_does_not_leak_to_other_fanout() {
+        let mut c = Circuit::new("fanout");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_gate(Gate::new(GateKind::And, vec![sig("a"), sig("b")], sig("n")));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("out")));
+        c.add_output(sig("out"));
+
+        let report = analyze(&c, Algebra::Kleene).unwrap();
+        let dead_pin: Vec<&Fault> = report
+            .faults
+            .iter()
+            .filter(|f| f.gate == "n" && f.input == "a")
+            .collect();
+        assert_eq!(dead_pin.len(), 2, "每个极性一条");
+        assert!(
+            dead_pin.iter().all(|f| !f.observable),
+            "n 不通向主输出，两个极性都不可测"
+        );
+        assert!(
+            !report
+                .redundant_inputs
+                .contains(&("n".to_string(), "a".to_string())),
+            "该引脚会改变 n，只是观测不到，不是冗余"
+        );
+    }
+
+    #[test]
+    fn fault_polarities_are_reported_separately() {
+        let mut c = Circuit::new("const-pin");
+        c.add_input(sig("b"));
+        c.add_gate(Gate::constant(Ternary::True, sig("one")));
+        c.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig("one"), sig("b")],
+            sig("y"),
+        ));
+        c.add_output(sig("y"));
+
+        let report = analyze(&c, Algebra::Kleene).unwrap();
+        let sa0 = report
+            .faults
+            .iter()
+            .find(|f| f.gate == "y" && f.input_index == 0 && f.stuck_at == Ternary::False)
+            .expect("应有 SA-0");
+        let sa1 = report
+            .faults
+            .iter()
+            .find(|f| f.gate == "y" && f.input_index == 0 && f.stuck_at == Ternary::True)
+            .expect("应有 SA-1");
+        assert!(sa0.observable, "把常 1 拉到 0 会改变输出");
+        assert!(!sa1.observable, "该引脚本来就是 1，SA-1 无变化");
     }
 }

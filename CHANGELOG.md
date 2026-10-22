@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] - 2026-10-22
+
+### Changed（破坏性）
+
+- `CircuitReport::untestable_faults` 替换为 `faults: Vec<Fault>`：逐**门引脚**、逐极性（SA-0/SA-1）。
+  `trit circuit` 的 JSON 字段同步为 `faults`（含 `input_index` / `stuck_at` / `observable`）。
+
+### Added
+
+- `trit-core`：解析嵌套上限 256（`ParseError::TooDeep`）。
+- CLI 入口规模护栏：`table` / REPL 最多 10 个变量，网表分析最多 10 个主输入。
+
+### Fixed
+
+- 故障注入从整条 net 改为 gate-pin：多扇出不再串扰，SA-0 / SA-1 分开报告。
+- `TriVec::from_ternary` / `and_assign` / `or_assign` 的纯二值路径不再分配 Unknown 临时平面。
+- GitHub Action 全部固定到 commit SHA（checkout / rust-toolchain / rust-cache / artifact / gh-release），
+  MSRV 1.88 同样固定。
+- 文档：DESIGN 路线补 v0.5；CONTRIBUTING 的 `tla-core` 路径改为 `trit-core` / `trit-eval`；
+  `bulk_bench` 把缓冲区分配移出 move-only 计时；README 明确双导轨只是进程内表示，不是字节协议。
+
 ## [0.4.2] - 2026-10-22
 
 ### Fixed

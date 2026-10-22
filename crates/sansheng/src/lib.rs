@@ -28,7 +28,8 @@ pub use trit_belnap::{
     eval as eval_belnap, table as table_belnap,
 };
 pub use trit_circuit::{
-    Circuit, CircuitError, CircuitReport, Gate, GateKind, Signal, SimulationRow, analyze,
+    Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
+    SimulationRow, analyze, propagate,
 };
 pub use trit_core::{Algebra, BitPlane, Expr, Parser, Ternary, TriBit, TriVec, TruthTable};
 pub use trit_eval::{

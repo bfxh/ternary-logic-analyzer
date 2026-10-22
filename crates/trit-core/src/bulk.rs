@@ -78,22 +78,21 @@ impl TriVec {
     /// 从标量三值切片打包。
     pub fn from_ternary(values: &[Ternary]) -> Self {
         let mut ones = vec![0u64; values.len().div_ceil(64)];
-        let mut unknowns = vec![0u64; ones.len()];
-        let mut any_unknown = false;
+        let mut unknowns: Option<Vec<u64>> = None;
         for (i, &value) in values.iter().enumerate() {
             match value {
                 Ternary::False => {}
                 Ternary::True => ones[i / 64] |= 1u64 << (i % 64),
                 Ternary::Unknown => {
-                    unknowns[i / 64] |= 1u64 << (i % 64);
-                    any_unknown = true;
+                    let planes = unknowns.get_or_insert_with(|| vec![0u64; ones.len()]);
+                    planes[i / 64] |= 1u64 << (i % 64);
                 }
             }
         }
         Self {
             len: values.len(),
             ones,
-            unknowns: any_unknown.then_some(unknowns),
+            unknowns,
         }
     }
 
@@ -215,7 +214,12 @@ impl TriVec {
     pub fn and_assign(&mut self, other: &Self, alg: Algebra) -> Result<(), ShapeError> {
         self.check_shape(other)?;
         let mask = last_mask(self.len);
-        let mut new_unknowns = Vec::with_capacity(self.ones.len());
+        let both_binary = self.unknowns.is_none() && other.unknowns.is_none();
+        let mut new_unknowns = if both_binary {
+            None
+        } else {
+            Some(Vec::with_capacity(self.ones.len()))
+        };
         for w in 0..self.ones.len() {
             let o1 = self.ones[w];
             let o2 = other.ones[w];
@@ -236,9 +240,14 @@ impl TriVec {
                 }
             };
             self.ones[w] = o;
-            new_unknowns.push(x);
+            if let Some(planes) = &mut new_unknowns {
+                planes.push(x);
+            }
         }
-        self.replace_unknowns(new_unknowns);
+        match new_unknowns {
+            Some(planes) => self.replace_unknowns(planes),
+            None => self.unknowns = None,
+        }
         Ok(())
     }
 
@@ -246,7 +255,12 @@ impl TriVec {
     pub fn or_assign(&mut self, other: &Self, alg: Algebra) -> Result<(), ShapeError> {
         self.check_shape(other)?;
         let mask = last_mask(self.len);
-        let mut new_unknowns = Vec::with_capacity(self.ones.len());
+        let both_binary = self.unknowns.is_none() && other.unknowns.is_none();
+        let mut new_unknowns = if both_binary {
+            None
+        } else {
+            Some(Vec::with_capacity(self.ones.len()))
+        };
         for w in 0..self.ones.len() {
             let o1 = self.ones[w];
             let o2 = other.ones[w];
@@ -267,9 +281,14 @@ impl TriVec {
                 }
             };
             self.ones[w] = o;
-            new_unknowns.push(x);
+            if let Some(planes) = &mut new_unknowns {
+                planes.push(x);
+            }
         }
-        self.replace_unknowns(new_unknowns);
+        match new_unknowns {
+            Some(planes) => self.replace_unknowns(planes),
+            None => self.unknowns = None,
+        }
         Ok(())
     }
 

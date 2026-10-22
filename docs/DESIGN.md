@@ -63,10 +63,12 @@
 
 ## 路线
 
-- **v0.2（本版）**：五 crate workspace、二进制零开销桥、SAT 与网表并入。
+- **v0.2**：五 crate workspace、二进制零开销桥、SAT 与网表并入。
 - **v0.3**：反例最小化或 BDD 后端（二选一，按基准）；`trit verify` 决策表 + GitHub Action 模板。
 - **v0.4**：Belnap 四值（`trit-belnap` + `trit belnap`，opt-in，不改三值）与 WASM Playground
   （`trit-wasm` + `playground/`，浏览器里跑求值/真值表/等价）。
+- **v0.5（当前）**：静态审查整改——引脚级故障模型、解析深度与入口规模上限、Action SHA 固定、
+  文档与格式边界澄清。
 
 ## 参考
 

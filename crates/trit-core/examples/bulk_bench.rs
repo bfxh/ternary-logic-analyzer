@@ -31,8 +31,10 @@ fn main() {
     let out = va.to_bools().unwrap();
     let unpack = t.elapsed();
 
+    // 分配放在计时外：这里量的是 move-only 视图本身。
+    let zeros = vec![0u64; n.div_ceil(64)];
     let t = Instant::now();
-    let _binary = TriVec::from_binary(vec![0u64; n.div_ceil(64)], n);
+    let _binary = TriVec::from_binary(zeros, n);
     let move_view = t.elapsed();
 
     let checksum = out.iter().filter(|&&x| x).count();

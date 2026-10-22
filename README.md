@@ -71,12 +71,14 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## 二进制 ↔ 三值：零开销
 
-双导轨 `(ones, unknowns)` 是唯一交换格式：`(0,0)=False`、`(1,0)=True`、`(0,1)=Unknown`。
+双导轨 `(ones, unknowns)` 是**进程内表示**：`(0,0)=False`、`(1,0)=True`、`(0,1)=Unknown`，禁止 `(1,1)`。
+它**不是**跨语言/持久化的字节协议：没有头部、版本、字节序或 padding 约定；CLI 的 JSON 也没有 `schema_version`。
+需要跨进程交换时请显式定义自己的格式，不要把 `Vec<u64>` 的内存布局或 Serde 枚举标签当协议。
 二进制数据就是 `unknowns` 缺失：
 
 - `Ternary::from_bool` / `to_bool`：标量边界；
 - `TriBit::from_binary(u64)` / `as_binary()`：64 路位并行的零开销桥；
-- `TriVec::from_binary(Vec<u64>, len)`：**接管**位平面，不复制、不分配 unknown 平面；
+- `TriVec::from_binary(Vec<u64>, len)`：**接管**位平面（多余字截断、尾部掩码），不复制、不分配 unknown 平面；
   只有写入 `Unknown` 时才惰性分配第二平面。
 
 实测（1,048,576 元素，release，同机单次；`cargo run --release -p trit-core --example bulk_bench`）：

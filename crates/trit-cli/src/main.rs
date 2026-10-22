@@ -316,6 +316,12 @@ fn cmd_eval(expression: &str, assign: &str, alg_name: &str) -> Result<()> {
 fn cmd_table(expression: &str, format: Format, alg_name: &str) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let expr = parse_expr(expression)?;
+    if expr.variables().len() > 10 {
+        bail!(
+            "真值表最多 10 个变量（3^11 = 177147 行），当前 {}",
+            expr.variables().len()
+        );
+    }
     let tt = truth_table(&expr, alg);
     print!(
         "{}",
@@ -909,6 +915,13 @@ fn cmd_circuit(
         return Ok(());
     }
 
+    if circuit.input_count() > 10 {
+        bail!(
+            "网表分析最多 10 个主输入（3^11 = 177147 组 × 故障注入），当前 {}",
+            circuit.input_count()
+        );
+    }
+
     let report = trit_circuit::circuit::analyze(&circuit, alg)
         .with_context(|| format!("网表分析失败：{}", path.display()))?;
 
@@ -925,9 +938,15 @@ fn cmd_circuit(
                     .iter()
                     .map(|(g, s)| serde_json::json!({"gate": g, "input": s}))
                     .collect::<Vec<_>>(),
-                "untestable_faults": report.untestable_faults
+                "faults": report.faults
                     .iter()
-                    .map(|(g, s)| serde_json::json!({"gate": g, "input": s}))
+                    .map(|f| serde_json::json!({
+                        "gate": f.gate,
+                        "input": f.input,
+                        "input_index": f.input_index,
+                        "stuck_at": f.stuck_at.as_char().to_string(),
+                        "observable": f.observable,
+                    }))
                     .collect::<Vec<_>>(),
                 "output_domains": report.output_domains
                     .iter()
@@ -965,10 +984,18 @@ fn cmd_circuit(
                     println!("  门 {gate} 的输入 {sig}");
                 }
             }
-            if !report.untestable_faults.is_empty() {
+            let untestable: Vec<&trit_circuit::circuit::Fault> =
+                report.faults.iter().filter(|f| !f.observable).collect();
+            if !untestable.is_empty() {
                 println!("\n不可测故障（stuck-at 无法观测）：");
-                for (gate, sig) in &report.untestable_faults {
-                    println!("  门 {gate} 的输入 {sig}");
+                for fault in untestable {
+                    println!(
+                        "  门 {} 的输入 {}[{}] stuck-at {}",
+                        fault.gate,
+                        fault.input,
+                        fault.input_index,
+                        fault.stuck_at.as_char()
+                    );
                 }
             }
         }
@@ -1204,6 +1231,10 @@ fn cmd_repl(alg_name: &str) -> Result<()> {
                 }
                 match ExprParser::parse(input) {
                     Ok(expr) => {
+                        if expr.variables().len() > 10 {
+                            println!("真值表最多 10 个变量，当前 {}", expr.variables().len());
+                            continue;
+                        }
                         let tt = truth_table(&expr, alg);
                         print!("{}", Format::Table.render_truth_table(&tt, input));
                     }

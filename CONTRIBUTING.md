@@ -30,8 +30,8 @@ cargo test --workspace
   - B3 的 `X` 是毒值，吸收一切，**吸收律与分配律都不成立**；
   - Ł3 的 `X ⊕ X = 1`、`X ⊗ X = 0`、`X ⇒ X = 1`；
   - **矛盾律 `a ∧ ¬a = 0` 在三套语义下都不成立**（`a = X` 时 `X ∧ X = X`）。
-- 位并行实现（`crates/tla-core/src/bits.rs`）改动后，必须有属性测试保证
-  与标量语义逐位一致（见 `crates/tla-core/tests/properties.rs`）。
+- 位并行实现（`crates/trit-core/src/bits.rs`）改动后，必须有属性测试保证
+  与标量语义逐位一致（见 `crates/trit-eval/tests/properties.rs`）。
 - 化简规则改动后，必须验证**不改变语义**（`simplify_preserves_semantics`）。
 
 ## 提交信息
