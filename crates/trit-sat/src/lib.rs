@@ -4,5 +4,5 @@ pub mod symbolic;
 
 pub use symbolic::{
     EncodingSize, SymbolicError, encoding_size, equivalent_symbolic, equivalent_symbolic_with,
-    minimal_counterexample, satisfiable,
+    minimal_counterexample, premise_counterexample, satisfiable,
 };

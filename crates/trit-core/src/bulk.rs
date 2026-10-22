@@ -41,13 +41,18 @@ pub struct TriVec {
 impl TriVec {
     /// 零拷贝接管二进制位平面：`ones` 的位为 1 表示 `True`，0 表示 `False`。
     ///
-    /// `ones` 必须至少覆盖 `len` 位；末尾多余位必须是 0。
-    pub fn from_binary(ones: Vec<u64>, len: usize) -> Self {
+    /// `ones` 必须至少覆盖 `len` 位；多余字会被截断，末尾多余位会被清零。
+    pub fn from_binary(mut ones: Vec<u64>, len: usize) -> Self {
         assert!(
             ones.len() * 64 >= len,
             "位平面不足以覆盖 {len} 位：{} words",
             ones.len()
         );
+        let words = len.div_ceil(64);
+        ones.truncate(words);
+        if let Some(last) = ones.last_mut() {
+            *last &= last_mask(len);
+        }
         Self {
             len,
             ones,
@@ -330,6 +335,23 @@ mod tests {
             let moved = TriVec::from_binary(words, len);
             assert_eq!(moved.to_bools().unwrap(), bits);
         }
+    }
+
+    #[test]
+    fn from_binary_normalizes_oversized_planes() {
+        let normalized = TriVec::from_binary(vec![0, 0], 1);
+        assert_eq!(normalized.words(), 1);
+        assert_eq!(normalized, TriVec::from_binary(vec![0], 1));
+
+        // 尾部 padding 必须被清零
+        let masked = TriVec::from_binary(vec![u64::MAX], 3);
+        assert_eq!(masked.to_bools().unwrap(), vec![true, true, true]);
+
+        // 物理字数不同的两个向量可以安全运算
+        let mut left = TriVec::from_binary(vec![1, 0], 1);
+        let right = TriVec::from_binary(vec![1], 1);
+        left.and_assign(&right, Algebra::Kleene).unwrap();
+        assert_eq!(left.to_bools().unwrap(), vec![true]);
     }
 
     #[test]

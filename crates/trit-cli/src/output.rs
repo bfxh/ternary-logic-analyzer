@@ -33,14 +33,15 @@ impl Format {
 
 /// 把一行的取值拼成紧凑字符串。
 fn row_string(tt: &TruthTable, index: usize) -> String {
+    row_values(tt, index).into_iter().collect()
+}
+
+/// 一行里每个变量的取值（按列）。
+fn row_values(tt: &TruthTable, index: usize) -> Vec<char> {
+    let asg = decode_assignment(index as u64, &tt.variables);
     tt.variables
         .iter()
-        .map(|v| {
-            let asg = decode_assignment(index as u64, &tt.variables);
-            asg.get(v).unwrap_or(Ternary::Unknown).as_compact_char()
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
+        .map(|v| asg.get(v).unwrap_or(Ternary::Unknown).as_compact_char())
         .collect()
 }
 
@@ -55,12 +56,12 @@ pub fn render_markdown(tt: &TruthTable, title: &str) -> String {
     // 分隔行：变量列 + 结果列
     let _ = writeln!(out, "|{}|", "---|".repeat(tt.variables.len() + 1));
     for i in 0..tt.values.len() {
-        let _ = writeln!(
-            out,
-            "| {} | {} |",
-            row_string(tt, i),
-            tt.values[i].as_compact_char()
-        );
+        let mut cells: Vec<String> = row_values(tt, i)
+            .into_iter()
+            .map(|c| c.to_string())
+            .collect();
+        cells.push(tt.values[i].as_compact_char().to_string());
+        let _ = writeln!(out, "| {} |", cells.join(" | "));
     }
     out
 }
@@ -68,15 +69,16 @@ pub fn render_markdown(tt: &TruthTable, title: &str) -> String {
 /// 渲染 CSV。
 pub fn render_csv(tt: &TruthTable) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "{}", tt.variables.join(","));
-    let _ = writeln!(out, "f");
+    let mut header: Vec<String> = tt.variables.clone();
+    header.push("f".to_string());
+    let _ = writeln!(out, "{}", header.join(","));
     for i in 0..tt.values.len() {
-        let _ = writeln!(
-            out,
-            "{},{}",
-            row_string(tt, i),
-            tt.values[i].as_compact_char()
-        );
+        let mut cells: Vec<String> = row_values(tt, i)
+            .into_iter()
+            .map(|c| c.to_string())
+            .collect();
+        cells.push(tt.values[i].as_compact_char().to_string());
+        let _ = writeln!(out, "{}", cells.join(","));
     }
     out
 }
@@ -208,9 +210,11 @@ mod tests {
     fn csv_has_header_and_rows() {
         let s = render_csv(&sample());
         let lines: Vec<&str> = s.lines().collect();
-        assert_eq!(lines[0], "a,b");
-        assert_eq!(lines[1], "f");
-        assert_eq!(lines.len(), 11); // 表头 + 9 行
+        assert_eq!(lines[0], "a,b,f");
+        assert_eq!(lines.len(), 10); // 表头 + 9 行
+        assert!(lines[1..].iter().all(|line| line.split(',').count() == 3));
+        assert_eq!(lines[1], "0,0,0");
+        assert_eq!(lines[2], "1,0,0");
     }
 
     #[test]
@@ -218,6 +222,7 @@ mod tests {
         let s = render_markdown(&sample(), "t");
         assert!(s.contains("| a | b | f |"));
         assert!(s.contains("|---|---|---|"));
+        assert!(s.contains("| 0 | 0 | 0 |"));
     }
 
     #[test]

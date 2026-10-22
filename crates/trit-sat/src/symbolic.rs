@@ -635,6 +635,59 @@ pub fn satisfiable(
     Ok(Some(assignment))
 }
 
+/// 策略验证的元逻辑查询：前提**确定为 True**、断言**不为 True** 的合法赋值。
+///
+/// 三值的 `premise ⇒ assertion` 恒真并不等价于“只在前提为 True 的赋值上检查断言”：
+/// 后者需要在导轨层直接约束 `premise = (t=1, x=0)` 与 `assertion.t = 0`。
+pub fn premise_counterexample(
+    premise: &Expr,
+    assertion: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<Option<Assignment>, SymbolicError> {
+    let mut vars = premise.variables();
+    for v in assertion.variables() {
+        if !vars.contains(&v) {
+            vars.push(v);
+        }
+    }
+    let mut enc = Encoder::new(alg, binary_vars);
+    let p = enc.encode(premise);
+    let a = enc.encode(assertion);
+    enc.clause(&[Lit::from_var(p.t, true)]);
+    enc.clause(&[Lit::from_var(p.x, false)]);
+    enc.clause(&[Lit::from_var(a.t, false)]);
+    let sat = enc
+        .solver
+        .solve()
+        .map_err(|e| SymbolicError::Solver(e.to_string()))?;
+    if !sat {
+        return Ok(None);
+    }
+    let model = enc
+        .solver
+        .model()
+        .ok_or_else(|| SymbolicError::Solver("SAT 但没有模型".to_string()))?;
+    let trues: HashSet<Var> = model
+        .iter()
+        .filter(|lit| lit.is_positive())
+        .map(|lit| lit.var())
+        .collect();
+    let mut assignment = Assignment::new();
+    for name in &vars {
+        let node = enc.vars[name];
+        let value = if trues.contains(&node.t) {
+            Ternary::True
+        } else if trues.contains(&node.x) {
+            Ternary::Unknown
+        } else {
+            Ternary::False
+        };
+        assignment.set(name.clone(), value);
+    }
+    Ok(Some(assignment))
+}
+
 /// 只构建编码并返回规模，不求解；用于验证二值快速路径的收益。
 pub fn encoding_size(
     a: &Expr,

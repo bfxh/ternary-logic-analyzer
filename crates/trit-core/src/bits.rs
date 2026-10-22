@@ -169,7 +169,8 @@ impl TriBit {
         let resx = self.unknowns() | other.unknowns();
         let a1 = self.crisp_ones();
         let b1 = other.crisp_ones();
-        let res1 = a1 | b1;
+        // 1 平面必须扣掉未知位，否则会出现被禁止的 (1,1)。
+        let res1 = (a1 | b1) & !resx;
         Self {
             ones: BitPlane(res1),
             unknowns: BitPlane(resx),
@@ -519,6 +520,23 @@ mod tests {
                         alg.strong_and(a, b),
                         "{alg} {a}*{b}"
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ops_never_produce_illegal_rails() {
+        for alg in Algebra::ALL {
+            for a in Ternary::ALL {
+                for b in Ternary::ALL {
+                    for r in [
+                        tri(a).and(tri(b), alg),
+                        tri(a).or(tri(b), alg),
+                        tri(a).strong_add(tri(b), alg),
+                    ] {
+                        assert_eq!(r.ones.0 & r.unknowns.0, 0, "{alg} {a} {b} 产生了 (1,1)");
+                    }
                 }
             }
         }

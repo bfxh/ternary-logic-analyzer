@@ -123,9 +123,9 @@ fn table_csv_output_has_header() {
     let (stdout, _, code) = run(&["table", "a & b", "-f", "csv"]);
     assert_eq!(code, 0);
     let mut lines = stdout.lines();
-    assert_eq!(lines.next().unwrap(), "a,b");
-    assert_eq!(lines.next().unwrap(), "f");
-    assert_eq!(lines.count(), 9);
+    assert_eq!(lines.next().unwrap(), "a,b,f");
+    assert_eq!(lines.next().unwrap(), "0,0,0");
+    assert_eq!(lines.count(), 8);
 }
 
 #[test]

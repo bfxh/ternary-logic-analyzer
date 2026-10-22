@@ -792,13 +792,20 @@ fn cmd_simplify(
         ..SimplifyOptions::default()
     };
     let simplified = simplify_with(&expr, alg, opts);
+    if !equivalent(&expr, &simplified, alg).equivalent {
+        bail!(
+            "化简结果语义不等价（内部错误）：{} -> {}",
+            expr.to_infix(),
+            simplified.to_infix()
+        );
+    }
     match format {
         Format::Json => {
             let obj = serde_json::json!({
                 "original": expr.to_infix(),
                 "simplified": simplified.to_infix(),
                 "algebra": alg.as_str(),
-                "equivalent": equivalent(&expr, &simplified, alg).equivalent,
+                "equivalent": true,
             });
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
@@ -806,8 +813,7 @@ fn cmd_simplify(
             println!("原式：{}", expr.to_infix());
             println!("化简：{}", simplified.to_infix());
             println!("语义：{alg}");
-            let eq = equivalent(&expr, &simplified, alg);
-            println!("语义等价：{}", if eq.equivalent { "是" } else { "否" });
+            println!("语义等价：是");
         }
     }
     Ok(())
@@ -1159,14 +1165,14 @@ fn parse_b4_assignment(src: &str) -> Result<BTreeMap<String, trit_belnap::B4>> {
 
 /// `repl` 子命令：交互式会话。
 fn cmd_repl(alg_name: &str) -> Result<()> {
-    let alg = resolve_algebra(alg_name)?;
+    let mut alg = resolve_algebra(alg_name)?;
     println!("三值逻辑分析器 REPL  [{alg}]");
     println!("输入表达式查看真值表；`:help` 看命令，`:quit` 退出。");
 
     let stdin = std::io::stdin();
     let mut line = String::new();
     loop {
-        print!("tla> ");
+        print!("trit> ");
         std::io::stdout().flush().ok();
         line.clear();
         let n = stdin.lock().read_line(&mut line)?;
@@ -1189,6 +1195,7 @@ fn cmd_repl(alg_name: &str) -> Result<()> {
                 if let Some(rest) = input.strip_prefix(":algebra") {
                     match resolve_algebra(rest.trim()) {
                         Ok(a) => {
+                            alg = a;
                             println!("已切换到 {a}");
                         }
                         Err(e) => println!("{e:#}"),

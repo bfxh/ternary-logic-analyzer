@@ -41,11 +41,33 @@ fn forall_over_one_variable_returns_free_counterexample() {
     .expect("量化不应报错");
     assert!(!q.is_valid());
     let counterexample = q.counterexample().expect("应有反例");
-    assert_ne!(
-        counterexample.get("b"),
-        Some(Ternary::True),
-        "b=1 时 a&b 对 a 全称成立，不能是反例"
-    );
+    // 任何 b 都不能让 a&b 对 a 全称成立（a=0 即失败），所以只要求见证只含自由变量。
+    assert_eq!(counterexample.variables(), ["b".to_string()]);
+}
+
+#[test]
+fn forall_with_free_ternary_variable_is_judged_on_valid_domain() {
+    // ∀a. a | (b | 1) 对所有合法 b（含 X）恒真。
+    let expr = parse("a | (b | 1)");
+    let q = quantify_bdd(
+        &expr,
+        &["a".to_string()],
+        Quantifier::Forall,
+        Algebra::Kleene,
+        &HashSet::new(),
+    )
+    .expect("量化不应报错");
+    assert!(q.is_valid(), "自由变量 b 下仍应恒真");
+    assert!(q.counterexample().is_none());
+}
+
+#[test]
+fn satisfiable_requires_a_legal_valuation() {
+    // K3：!(a | !a) 在 a=0/1 为 0，在 a=X 为 X，没有让结果为 True 的合法赋值。
+    let expr = parse("!(a | !a)");
+    let witness =
+        trit_bdd::satisfiable_bdd(&expr, Algebra::Kleene, &HashSet::new()).expect("求解不应报错");
+    assert!(witness.is_none(), "非法导轨不能当作见证");
 }
 
 #[test]

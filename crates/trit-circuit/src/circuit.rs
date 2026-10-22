@@ -294,6 +294,7 @@ pub enum CircuitError {
 /// 对电路做一次完整分析。
 pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, CircuitError> {
     validate(circuit)?;
+    let order = topological_order(circuit)?;
 
     let total = circuit.combination_count();
     let mut unknown_outputs = 0u64;
@@ -316,8 +317,9 @@ pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, Circuit
             };
             values.insert(inp.name().to_string(), v);
         }
-        // 门求值（按拓扑序；无环时 gates 顺序即可）
-        for gate in &circuit.gates {
+        // 门求值：按真正的拓扑序，与声明顺序无关
+        for &idx in &order {
+            let gate = &circuit.gates[idx];
             let ins: Vec<Ternary> = gate
                 .inputs
                 .iter()
@@ -423,7 +425,7 @@ pub fn propagate(
     }
 
     let mut masked: Vec<String> = Vec::new();
-    for idx in topological_order(circuit) {
+    for idx in topological_order(circuit)? {
         let gate = &circuit.gates[idx];
         let ins: Vec<Ternary> = gate
             .inputs
@@ -522,6 +524,11 @@ fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
             }
         }
     }
+    for out in &circuit.outputs {
+        if !driven.contains(out.name()) {
+            return Err(CircuitError::UndrivenSignal(out.name().to_string()));
+        }
+    }
     // 拓扑排序检测环
     if !is_acyclic(circuit) {
         return Err(CircuitError::CombinationalLoop);
@@ -595,6 +602,7 @@ fn is_acyclic(circuit: &Circuit) -> bool {
 /// 返回 `(冗余输入列表, 不可测故障列表)`，每项为 `(门输出, 输入信号)`。
 fn detect_input_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, CircuitError> {
     let total = circuit.combination_count();
+    let order = topological_order(circuit)?;
     let mut redundant: Vec<GateSignalPair> = Vec::new();
     let mut untestable: Vec<GateSignalPair> = Vec::new();
 
@@ -607,7 +615,7 @@ fn detect_input_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, C
             let mut gate_out_same = true;
             let mut observable_any = false;
             for combo in 0..total {
-                let base = simulate_combo(circuit, combo, alg);
+                let base = simulate_combo(circuit, combo, alg, &order);
                 let base_out = base
                     .get(gate.output.name())
                     .copied()
@@ -619,13 +627,8 @@ fn detect_input_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, C
                     .collect();
 
                 for stuck in [Ternary::False, Ternary::True] {
-                    let injected = simulate_with_fault(
-                        circuit,
-                        combo,
-                        alg,
-                        Some((probe, stuck)),
-                        Ternary::Unknown,
-                    );
+                    let injected =
+                        simulate_with_fault(circuit, combo, alg, Some((probe, stuck)), &order);
                     let inj_out = injected
                         .get(gate.output.name())
                         .copied()
@@ -658,7 +661,7 @@ fn detect_input_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, C
 ///
 /// 电路已通过 `validate` 校验（无组合环），故排序一定成功；
 /// 若出现异常则退化为原始顺序。
-fn topological_order(circuit: &Circuit) -> Vec<usize> {
+fn topological_order(circuit: &Circuit) -> Result<Vec<usize>, CircuitError> {
     let driven: BTreeSet<String> = circuit
         .gates
         .iter()
@@ -675,11 +678,8 @@ fn topological_order(circuit: &Circuit) -> Vec<usize> {
         pending.push((i, deps.len(), deps));
     }
     let mut order: Vec<usize> = Vec::with_capacity(circuit.gates.len());
-    let mut resolved: BTreeSet<String> = circuit
-        .gates
-        .iter()
-        .map(|g| g.output.name().to_string())
-        .collect();
+    // 初始只能包含“不依赖任何门输出”的源；把全部门输出预置进来会让排序退化成声明序。
+    let mut resolved: BTreeSet<String> = BTreeSet::new();
     let mut guard = 0usize;
     while order.len() < circuit.gates.len() && guard <= circuit.gates.len() {
         guard += 1;
@@ -694,14 +694,19 @@ fn topological_order(circuit: &Circuit) -> Vec<usize> {
         }
     }
     if order.len() != circuit.gates.len() {
-        return (0..circuit.gates.len()).collect();
+        return Err(CircuitError::CombinationalLoop);
     }
-    order
+    Ok(order)
 }
 
 /// 按给定输入组合模拟整个电路，返回所有信号取值。
-fn simulate_combo(circuit: &Circuit, combo: u64, alg: Algebra) -> BTreeMap<String, Ternary> {
-    simulate_with_fault(circuit, combo, alg, None, Ternary::Unknown)
+fn simulate_combo(
+    circuit: &Circuit,
+    combo: u64,
+    alg: Algebra,
+    order: &[usize],
+) -> BTreeMap<String, Ternary> {
+    simulate_with_fault(circuit, combo, alg, None, order)
 }
 
 /// 模拟电路并注入一个 stuck-at 故障。
@@ -715,7 +720,7 @@ fn simulate_with_fault(
     combo: u64,
     alg: Algebra,
     fault: Option<(&Signal, Ternary)>,
-    _unused: Ternary,
+    order: &[usize],
 ) -> BTreeMap<String, Ternary> {
     let mut values: BTreeMap<String, Ternary> = BTreeMap::new();
     let mut t = combo;
@@ -736,7 +741,7 @@ fn simulate_with_fault(
         values.insert(sig.name().to_string(), fv);
     }
     // 按拓扑序求值
-    for idx in topological_order(circuit) {
+    for &idx in order {
         let gate = &circuit.gates[idx];
         // 驱动点故障注入
         if let Some((sig, fv)) = fault
@@ -922,8 +927,9 @@ mod tests {
         c.add_gate(Gate::new(GateKind::Not, vec![sig("u")], sig("y")));
         c.add_output(sig("y"));
 
+        let order = topological_order(&c).unwrap();
         for combo in 0..c.combination_count() {
-            let base = simulate_combo(&c, combo, Algebra::Kleene);
+            let base = simulate_combo(&c, combo, Algebra::Kleene, &order);
             let assign: BTreeMap<String, Ternary> = c
                 .inputs
                 .iter()
@@ -978,5 +984,52 @@ mod tests {
         c.add_output(sig("y"));
         let err = analyze(&c, Algebra::Kleene).unwrap_err();
         assert!(matches!(err, CircuitError::DuplicateInput(ref s) if s == "a"));
+    }
+
+    #[test]
+    fn evaluation_is_independent_of_gate_declaration_order() {
+        let build = |reversed: bool| {
+            let mut c = Circuit::new("chain");
+            c.add_input(sig("a"));
+            c.add_output(sig("out"));
+            let gates = [
+                Gate::new(GateKind::Not, vec![sig("a")], sig("n")),
+                Gate::new(GateKind::Not, vec![sig("n")], sig("out")),
+            ];
+            if reversed {
+                for gate in gates.into_iter().rev() {
+                    c.add_gate(gate);
+                }
+            } else {
+                for gate in gates {
+                    c.add_gate(gate);
+                }
+            }
+            c
+        };
+
+        for reversed in [false, true] {
+            let c = build(reversed);
+            let p = propagate(&c, &assignment(&[("a", Ternary::True)]), Algebra::Kleene).unwrap();
+            assert_eq!(p.outputs["out"], Ternary::True, "reversed={reversed}");
+        }
+
+        let forward = analyze(&build(false), Algebra::Kleene).unwrap();
+        let reversed = analyze(&build(true), Algebra::Kleene).unwrap();
+        assert_eq!(forward.output_domains, reversed.output_domains);
+        assert_eq!(
+            forward.unknown_output_combinations,
+            reversed.unknown_output_combinations
+        );
+        assert!(forward.output_domains["out"].contains(&Ternary::True));
+    }
+
+    #[test]
+    fn rejects_undriven_primary_output() {
+        let mut c = Circuit::new("ghost");
+        c.add_input(sig("a"));
+        c.add_output(sig("ghost"));
+        let err = analyze(&c, Algebra::Kleene).unwrap_err();
+        assert!(matches!(err, CircuitError::UndrivenSignal(ref s) if s == "ghost"));
     }
 }

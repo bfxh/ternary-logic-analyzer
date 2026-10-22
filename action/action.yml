@@ -15,7 +15,14 @@ runs:
     - uses: dtolnay/rust-toolchain@stable
     - shell: bash
       working-directory: ${{ github.workspace }}
+      env:
+        POLICY_PATH: ${{ inputs.policy }}
+        TRIT_ENGINE: ${{ inputs.engine }}
       run: |
+        case "$TRIT_ENGINE" in
+          sat|bdd) ;;
+          *) echo "engine must be sat or bdd, got: $TRIT_ENGINE" >&2; exit 2 ;;
+        esac
         cargo run --release --quiet --locked \
-          --manifest-path "${{ github.action_path }}/../Cargo.toml" \
-          -p trit-cli -- verify "${{ inputs.policy }}" --engine "${{ inputs.engine }}"
+          --manifest-path "${GITHUB_ACTION_PATH}/../Cargo.toml" \
+          -p trit-cli -- verify "$POLICY_PATH" --engine "$TRIT_ENGINE"

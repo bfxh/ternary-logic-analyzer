@@ -11,8 +11,8 @@
 //!
 //! - **Kleene / Łukasiewicz** 的 `X` 是链的中点，构成分配格，
 //!   因此吸收律、分配律、`a ∧ ¬a = 0` 之外的格性质成立。
-//! - **Bochvar** 的 `X` 是毒值（吸收元），分配律、吸收律都**不成立**
-//!   （例：`0 ∧ (0 ∨ 1) = 0`，但 `0 ∧ 0 ∨ 0 ∧ 1 = X`）。
+//! - **Bochvar** 的 `X` 是毒值：分配律仍成立，但吸收律**不成立**
+//!   （例：`a ∨ (a ∧ b)` 取 `a=0,b=X` 时左边为 `X`、右边为 `0`）。
 //! - 矛盾律 `a ∧ ¬a = 0` 在三种语义下**都不成立**
 //!   （取 `a = X` 时 `X ∧ X = X`），因此化简器不使用该规则。
 
@@ -199,6 +199,16 @@ fn absorb(x: &Expr, y: &Expr) -> Option<Expr> {
     None
 }
 
+/// `∨` 的吸收：`a ∨ (a ∧ b) = a`。
+fn absorb_or(x: &Expr, y: &Expr) -> Option<Expr> {
+    if let Expr::And(p, q) = y
+        && (**p == *x || **q == *x)
+    {
+        return Some(x.clone());
+    }
+    None
+}
+
 /// `∨` 的重写规则。
 fn rewrite_or(x: Expr, y: Expr, alg: Algebra) -> Expr {
     if let (Expr::Const(a), Expr::Const(b)) = (&x, &y) {
@@ -233,10 +243,10 @@ fn rewrite_or(x: Expr, y: Expr, alg: Algebra) -> Expr {
     if x == y {
         return x;
     }
-    if let Some(absorbed) = absorb(&x, &y) {
+    if let Some(absorbed) = absorb_or(&x, &y) {
         return absorbed;
     }
-    if let Some(absorbed) = absorb(&y, &x) {
+    if let Some(absorbed) = absorb_or(&y, &x) {
         return absorbed;
     }
     let (a, b) = ordered(x, y);
@@ -256,8 +266,9 @@ fn rewrite_xor(x: Expr, y: Expr, alg: Algebra) -> Expr {
     if alg == Algebra::Lukasiewicz && x.is_unknown_const() && y.is_unknown_const() {
         return Expr::Const(Ternary::True);
     }
-    if x == y && alg == Algebra::Kleene {
-        return Expr::Const(Ternary::Unknown);
+    // K3/B3：a ⊕ a = a（X 也传播为 X）；Ł3 只在 0/1 上相同，X ⊕ X = 1 已在上面处理。
+    if x == y && alg != Algebra::Lukasiewicz {
+        return x;
     }
     let (a, b) = ordered(x, y);
     Expr::xor(a, b)
@@ -282,15 +293,17 @@ fn rewrite_equiv(x: Expr, y: Expr, alg: Algebra) -> Expr {
     if let (Expr::Const(a), Expr::Const(b)) = (&x, &y) {
         return Expr::Const(alg.equiv(*a, *b));
     }
-    if x == y {
+    // 只有 Ł3 的 a ≡ a 在 X 上仍为 1；K3/B3 在 a=X 时为 X。
+    if x == y && alg == Algebra::Lukasiewicz {
         return Expr::Const(Ternary::True);
     }
     Expr::equiv(x, y)
 }
 
-/// 计算两个表达式的语义指纹（真值表摘要），用于快速判定等价。
+/// 计算表达式的语义指纹（真值表摘要），仅用于缓存/预筛选。
 ///
-/// 指纹相同当且仅当两表达式在给定语义下逻辑等价（变量集相同的前提下）。
+/// 指纹依赖变量出现顺序且只有 64 位：**相同不保证等价，不同也不保证不等价**。
+/// 判定等价请用 [`semantically_equal`]。
 pub fn semantic_fingerprint(expr: &Expr, alg: Algebra) -> u64 {
     let vars = expr.variables();
     let tt = truth_table(expr, alg);
@@ -310,33 +323,9 @@ pub fn semantic_fingerprint(expr: &Expr, alg: Algebra) -> u64 {
     hash
 }
 
-/// 判断两个表达式在给定语义下语义等价（基于真值表指纹）。
+/// 判断两个表达式在给定语义下语义等价（`3^n` 穷举，变量取并集）。
 pub fn semantically_equal(a: &Expr, b: Expr, alg: Algebra) -> bool {
-    let mut va = a.variables();
-    for v in b.variables() {
-        if !va.contains(&v) {
-            va.push(v);
-        }
-    }
-    let mut vb = b.variables();
-    for v in va.iter() {
-        if !vb.contains(v) {
-            vb.push(v.clone());
-        }
-    }
-    // 变量集不同则不能直接比指纹，先做同变量集求值
-    let expr_a = rename_to(a, &va);
-    let expr_b = rename_to(&b, &vb);
-    semantic_fingerprint(&expr_a, alg) == semantic_fingerprint(&expr_b, alg)
-}
-
-/// 把表达式中的变量按给定顺序重命名到同名的规范位置。
-///
-/// 变量名本身已唯一，此函数仅用于确保两边按相同顺序求值；
-/// 由于指纹计算包含了变量名列表，实际只需保证两边变量集合一致。
-fn rename_to(expr: &Expr, vars: &[String]) -> Expr {
-    let _ = vars;
-    expr.clone()
+    crate::eval::equivalent(a, &b, alg).equivalent
 }
 
 /// 未使用的占位，保持 API 公开但标注用途。
@@ -419,5 +408,47 @@ mod tests {
                 "bochvar simplify changed semantics: {src} -> {s}"
             );
         }
+    }
+
+    #[test]
+    fn absorption_only_removes_matching_operator() {
+        // a | (a | b) 不能化简成 a；a | (a & b) 可以。
+        let e = Parser::parse("a | (a | b)").unwrap();
+        let s = simplify(&e, Algebra::Kleene);
+        assert!(
+            crate::eval::equivalent(&e, &s, Algebra::Kleene).equivalent,
+            "a | (a | b) -> {s}"
+        );
+        assert_eq!(simp("a | (a & b)", Algebra::Kleene), "a");
+    }
+
+    #[test]
+    fn xor_and_equiv_self_respect_unknown() {
+        // K3/B3: a ⊕ a = a，a ≡ a 在 a=X 时为 X。
+        assert_eq!(simp("a ^ a", Algebra::Kleene), "a");
+        assert_eq!(simp("a ^ a", Algebra::Bochvar), "a");
+        let e = Parser::parse("a <=> a").unwrap();
+        let s = simplify(&e, Algebra::Kleene);
+        assert!(
+            crate::eval::equivalent(&e, &s, Algebra::Kleene).equivalent,
+            "a ≡ a -> {s}"
+        );
+        // Ł3 的自等价恒为 1
+        assert_eq!(simp("a <=> a", Algebra::Lukasiewicz), "1");
+    }
+
+    #[test]
+    fn semantically_equal_uses_real_equivalence() {
+        let a = Parser::parse("a & b").unwrap();
+        let b = Parser::parse("b & a").unwrap();
+        assert!(semantically_equal(&a, b, Algebra::Kleene));
+
+        let a = Parser::parse("a").unwrap();
+        let b = Parser::parse("a & (b | 1)").unwrap();
+        assert!(semantically_equal(&a, b, Algebra::Kleene));
+
+        let a = Parser::parse("a | (a | b)").unwrap();
+        let b = Parser::parse("a").unwrap();
+        assert!(!semantically_equal(&a, b, Algebra::Kleene));
     }
 }

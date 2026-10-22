@@ -308,7 +308,8 @@ pub fn satisfiable_bdd(
     let vars = expr.variables();
     let enc = Encoder::new(alg, &vars, binary_vars)?;
     let node = enc.encode(expr);
-    let sat = node.t.and(&node.x.not());
+    // 必须限定在合法三值域内：非法导轨 (1,1) 可能被 table 解释成 False，再被 Not 变成 True。
+    let sat = enc.valid().and(&node.t).and(&node.x.not());
     if sat.is_false() {
         return Ok(None);
     }
@@ -321,6 +322,49 @@ pub fn satisfiable_bdd(
         &vars,
         valuation.as_vector(),
     )))
+}
+
+/// 前提过滤查询的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PremiseCheck {
+    /// 反例；`None` 表示在前提为 True 的赋值上断言成立。
+    pub counterexample: Option<Assignment>,
+    /// 差集 BDD 的节点数。
+    pub nodes: usize,
+}
+
+/// 策略验证的元逻辑查询：前提**确定为 True**、断言**不为 True** 的合法赋值。
+pub fn premise_counterexample_bdd(
+    premise: &Expr,
+    assertion: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<PremiseCheck, BddError> {
+    let mut vars = premise.variables();
+    for v in assertion.variables() {
+        if !vars.contains(&v) {
+            vars.push(v);
+        }
+    }
+    let enc = Encoder::new(alg, &vars, binary_vars)?;
+    let p = enc.encode(premise);
+    let a = enc.encode(assertion);
+    let bad = enc.valid().and(&p.t).and(&p.x.not()).and(&a.t.not());
+    let nodes = bad.size();
+    let Some(valuation) = bad.sat_valuations().next() else {
+        return Ok(PremiseCheck {
+            counterexample: None,
+            nodes,
+        });
+    };
+    Ok(PremiseCheck {
+        counterexample: Some(assignment_from_valuation(
+            &enc,
+            &vars,
+            valuation.as_vector(),
+        )),
+        nodes,
+    })
 }
 
 /// 量化方向。
@@ -368,7 +412,8 @@ impl Quantified {
 
     /// 结果是否恒真（对自由变量的所有合法取值）。
     pub fn is_valid(&self) -> bool {
-        self.bdd.is_true()
+        // 结果已经与合法域相交；对布尔全集恒真会把“还有三值自由变量”误判成不恒真。
+        self.bdd.not().and(&self.valid_free).is_false()
     }
 
     /// 未被量化的变量（按首次出现顺序）。

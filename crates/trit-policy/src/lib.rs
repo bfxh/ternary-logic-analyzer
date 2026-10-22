@@ -15,21 +15,22 @@
 //! }
 //! ```
 //!
-//! 判定用 `expr ≡ 1` 在全合法赋值上是否成立：SAT 给出充分最小反例，
-//! BDD 给出 canonical 差集与完整赋值。
+//! 有 `assumptions` 时，断言只在**前提确定为 True** 的赋值上检查：
+//! 查询是“前提为 True 且断言不为 True”是否可满足，而不是三值 `premise ⇒ assertion` 恒真
+//! （后者会把 `a=X` 这类不满足前提的赋值也算进去）。
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use serde::Deserialize;
 
-use trit_bdd::{BddError, equivalent_bdd, satisfiable_bdd};
+use trit_bdd::{BddError, premise_counterexample_bdd, satisfiable_bdd};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::parser::Parser;
 use trit_core::value::Ternary;
 use trit_eval::Assignment;
-use trit_sat::{SymbolicError, minimal_counterexample, satisfiable};
+use trit_sat::{SymbolicError, premise_counterexample, satisfiable};
 
 /// 验证引擎。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +62,7 @@ impl Engine {
 
 /// 策略文件。
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
     /// 语义，默认 `kleene`。
     #[serde(default = "default_algebra")]
@@ -80,6 +82,7 @@ pub struct Policy {
 
 /// 一条断言。
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Assertion {
     /// 断言名。
     pub name: String,
@@ -130,6 +133,9 @@ pub enum PolicyError {
     /// 前提不一致。
     #[error("前提不一致：没有合法赋值能让所有 assumptions 为 True")]
     InconsistentAssumptions,
+    /// 策略没有任何断言。
+    #[error("策略没有断言：拒绝作为门禁运行")]
+    NoAssertions,
     /// SAT 引擎错误。
     #[error("SAT 错误: {0}")]
     Sat(String),
@@ -159,6 +165,9 @@ impl Policy {
 
     /// 逐条验证断言；任何一条失败都返回 `holds=false` 的结果，不提前中止。
     pub fn verify(&self, engine: Engine) -> Result<Vec<AssertionResult>, PolicyError> {
+        if self.assertions.is_empty() {
+            return Err(PolicyError::NoAssertions);
+        }
         let alg = Algebra::parse(&self.algebra)
             .ok_or_else(|| PolicyError::Algebra(self.algebra.clone()))?;
         let binary: HashSet<String> = self.binary.iter().cloned().collect();
@@ -187,10 +196,9 @@ impl Policy {
         for assertion in &self.assertions {
             let raw = parse_expr(&assertion.name, &assertion.expr)?;
             let expr = expand(&raw, &definitions, &mut Vec::new())?;
-            let check = Expr::implies(premise.clone(), expr);
             match engine {
                 Engine::Sat => {
-                    let witness = minimal_counterexample(&check, &truth, alg, &binary)
+                    let witness = premise_counterexample(&premise, &expr, alg, &binary)
                         .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
@@ -200,13 +208,13 @@ impl Policy {
                     });
                 }
                 Engine::Bdd => {
-                    let verdict = equivalent_bdd(&check, &truth, alg, &binary)
+                    let check = premise_counterexample_bdd(&premise, &expr, alg, &binary)
                         .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
-                        holds: verdict.result.equivalent,
-                        counterexample: verdict.result.counterexample_assignment,
-                        nodes: Some(verdict.nodes),
+                        holds: check.counterexample.is_none(),
+                        counterexample: check.counterexample,
+                        nodes: Some(check.nodes),
                     });
                 }
             }

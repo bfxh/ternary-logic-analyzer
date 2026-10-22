@@ -23,6 +23,45 @@ fn admission_policy_holds_on_both_engines() {
 }
 
 #[test]
+fn assumptions_filter_nondesignated_premise_values() {
+    // 前提 a 只在 a=1 时成立；a=X 不满足前提，不能成为反例。
+    let policy = Policy::from_json(
+        r#"{
+          "algebra": "kleene",
+          "assumptions": ["a"],
+          "assertions": [{ "name": "自身", "expr": "a" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let results = policy.verify(engine).expect("验证不应报错");
+        assert!(results[0].holds, "{engine:?}: {:?}", results[0]);
+    }
+}
+
+#[test]
+fn counterexample_satisfies_premise() {
+    let policy = Policy::from_json(
+        r#"{
+          "algebra": "kleene",
+          "assumptions": ["a"],
+          "assertions": [{ "name": "错误", "expr": "0" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let results = policy.verify(engine).expect("验证不应报错");
+        assert!(!results[0].holds);
+        let witness = results[0].counterexample.as_ref().expect("应有反例");
+        assert_eq!(
+            witness.get("a"),
+            Some(Ternary::True),
+            "{engine:?} 的反例必须满足前提"
+        );
+    }
+}
+
+#[test]
 fn bad_assertion_returns_counterexample() {
     let policy = Policy::from_json(
         r#"{
@@ -56,6 +95,20 @@ fn definition_cycle_is_rejected() {
     .expect("策略应可解析");
     let err = policy.verify(Engine::Sat).unwrap_err();
     assert!(matches!(err, PolicyError::Cycle(_)), "{err:?}");
+}
+
+#[test]
+fn unknown_fields_are_rejected() {
+    let err = Policy::from_json(r#"{"albegra":"kleene","assertions":[{"name":"x","expr":"1"}]}"#)
+        .unwrap_err();
+    assert!(matches!(err, PolicyError::Json(_)), "{err:?}");
+}
+
+#[test]
+fn empty_assertions_are_rejected() {
+    let policy = Policy::from_json(r#"{"assertions":[]}"#).expect("JSON 结构合法");
+    let err = policy.verify(Engine::Sat).unwrap_err();
+    assert!(matches!(err, PolicyError::NoAssertions), "{err:?}");
 }
 
 #[test]
