@@ -43,8 +43,8 @@ fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "netlist", "belnap",
-        "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "timing", "netlist",
+        "belnap", "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }
@@ -492,4 +492,23 @@ fn netlist_converts_to_verilog() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("module netlist"), "{stdout}");
     assert!(stdout.contains("and g0"), "{stdout}");
+}
+
+#[test]
+fn timing_reports_critical_path_and_slack() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chain3.net");
+    let (stdout, stderr, code) = run(&["timing", path.to_str().unwrap(), "--clock", "1"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("关键路径 2"), "{stdout}");
+    assert!(stdout.contains("slack=-1"), "{stdout}");
+    assert!(stdout.contains("违例 1"), "{stdout}");
+}
+
+#[test]
+fn atpg_accepts_verilog() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.v");
+    let (stdout, stderr, code) = run(&["atpg", path.to_str().unwrap(), "--from", "verilog"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("覆盖率 100.0%"), "{stdout}");
 }

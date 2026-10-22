@@ -126,6 +126,16 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 删掉后若仍可相等就必须保留。得到的是**充分**部分反例——未列出的变量在各自域内任取，两边仍不相等；
 不会退化成“只保证存在某个补全”的空反例。
 
+## 时序估算（`trit timing`）
+
+组合、单位延迟的 STA-lite：输入到达 0，每个非常量门加 `--delay`（默认 1），
+`--clock N` 给出周期时按反向传播算 required/slack，负 slack 记为违例。
+
+```bash
+trit timing design.net --clock 10
+trit timing design.v --from verilog --delay 2 --format json
+```
+
 ## BDD 引擎（`--bdd`）
 
 第三条等价路径：把双导轨直接建成 BDD，差集 BDD 为 false 即等价。BDD 是 canonical 的，

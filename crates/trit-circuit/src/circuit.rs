@@ -548,7 +548,7 @@ pub fn analyze_faults(circuit: &Circuit, alg: Algebra) -> Result<Vec<Fault>, Cir
     Ok(faults)
 }
 
-fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
+pub(crate) fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
     for gate in &circuit.gates {
         let actual = if gate.kind == GateKind::Const {
             0
@@ -883,7 +883,7 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
 ///
 /// 电路已通过 `validate` 校验（无组合环），故排序一定成功；
 /// 若出现异常则退化为原始顺序。
-fn topological_order(circuit: &Circuit) -> Result<Vec<usize>, CircuitError> {
+pub(crate) fn topological_order(circuit: &Circuit) -> Result<Vec<usize>, CircuitError> {
     let driven: BTreeSet<String> = circuit
         .gates
         .iter()

@@ -22,6 +22,7 @@ use trit_bdd::{
     BddLimits, BddRequest, Quantifier, VarOrder, equivalent_bdd_best_with_limits,
     equivalent_bdd_with, order_variables, quantify_bdd_best_with_limits, quantify_bdd_with,
 };
+use trit_circuit::circuit::Circuit;
 use trit_circuit::netlist::parse_netlist;
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
@@ -161,6 +162,9 @@ enum Commands {
         /// 单向量传播：`a=1,b=X`（给全所有主输入）。
         #[arg(long, value_name = "ASSIGN")]
         assign: Option<String>,
+        /// 输入格式：`text`（默认）/ `json` / `verilog`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        from: String,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -169,6 +173,26 @@ enum Commands {
     Atpg {
         /// 网表文件路径。
         path: std::path::PathBuf,
+        /// 输入格式：`text`（默认）/ `json` / `verilog`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        from: String,
+        /// 输出格式。
+        #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
+        format: Format,
+    },
+    /// 组合时序估算（单位延迟 STA-lite）。
+    Timing {
+        /// 网表文件路径。
+        path: std::path::PathBuf,
+        /// 输入格式：`text`（默认）/ `json` / `verilog`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        from: String,
+        /// 时钟周期（周期数）；省略时取关键路径，即 slack 全为 0。
+        #[arg(long, value_name = "CYCLES")]
+        clock: Option<u32>,
+        /// 门延迟（单位周期）。
+        #[arg(long, default_value_t = 1)]
+        delay: u32,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -305,9 +329,17 @@ fn main() -> Result<()> {
         Commands::Circuit {
             path,
             assign,
+            from,
             format,
-        } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref()),
-        Commands::Atpg { path, format } => cmd_atpg(&path, format, &cli.algebra),
+        } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref(), &from),
+        Commands::Atpg { path, from, format } => cmd_atpg(&path, format, &cli.algebra, &from),
+        Commands::Timing {
+            path,
+            from,
+            clock,
+            delay,
+            format,
+        } => cmd_timing(&path, &from, clock, delay, format),
         Commands::Netlist { path, from, to } => cmd_netlist(&path, &from, &to),
         Commands::Verify {
             path,
@@ -1009,12 +1041,10 @@ fn cmd_circuit(
     format: Format,
     alg_name: &str,
     assign: Option<&str>,
+    from: &str,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
-    let circuit =
-        parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?;
+    let circuit = load_circuit(path, from)?;
 
     if let Some(spec) = assign {
         let parsed = parse_assignment(spec)?;
@@ -1175,20 +1205,68 @@ fn cmd_circuit(
     Ok(())
 }
 
-/// `netlist` 子命令：网表文本与 JSON 互转。
-fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
+/// `timing` 子命令：组合时序估算。
+fn cmd_timing(
+    path: &std::path::Path,
+    from: &str,
+    clock: Option<u32>,
+    delay: u32,
+    format: Format,
+) -> Result<()> {
+    let circuit = load_circuit(path, from)?;
+    let report = trit_circuit::timing::analyze_timing(
+        &circuit,
+        trit_circuit::timing::TimingModel { delay },
+        clock,
+    )?;
+    match format {
+        Format::Json => {
+            let obj = serde_json::json!({
+                "circuit": circuit.name,
+                "critical_path": report.critical_path,
+                "clock": report.clock,
+                "violations": report.violations,
+                "outputs": report.outputs.iter().map(|output| serde_json::json!({
+                    "name": output.name,
+                    "arrival": output.arrival,
+                    "required": output.required,
+                    "slack": output.slack,
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        }
+        _ => {
+            println!(
+                "关键路径 {} 周期，时钟 {}，违例 {} 个",
+                report.critical_path, report.clock, report.violations
+            );
+            for output in &report.outputs {
+                println!(
+                    "  {}  arrival={} required={} slack={}",
+                    output.name, output.arrival, output.required, output.slack
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn load_circuit(path: &std::path::Path, from: &str) -> Result<Circuit> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
-    let circuit = match from {
-        "text" => {
-            parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?
-        }
+    match from {
+        "text" => parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display())),
         "json" => trit_circuit::netlist::from_json(&text)
-            .with_context(|| format!("JSON 解析失败：{}", path.display()))?,
+            .with_context(|| format!("JSON 解析失败：{}", path.display())),
         "verilog" => trit_circuit::verilog::parse_verilog(&text)
-            .with_context(|| format!("Verilog 解析失败：{}", path.display()))?,
+            .with_context(|| format!("Verilog 解析失败：{}", path.display())),
         other => bail!("未知输入格式 {other:?}，可选 text / json / verilog"),
-    };
+    }
+}
+
+/// `netlist` 子命令：网表文本与 JSON 互转。
+fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
+    let circuit = load_circuit(path, from)?;
     match to {
         "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)),
         "json" => println!("{}", trit_circuit::netlist::to_json(&circuit)?),
@@ -1199,12 +1277,9 @@ fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
 }
 
 /// `atpg` 子命令：生成 stuck-at 测试向量与覆盖率。
-fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()> {
+fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
-    let circuit =
-        parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?;
+    let circuit = load_circuit(path, from)?;
     if circuit.input_count() > 10 {
         bail!(
             "ATPG 最多 10 个主输入（2^11 = 2048 个向量 × 故障数），当前 {}",

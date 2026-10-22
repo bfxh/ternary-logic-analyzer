@@ -1,0 +1,6 @@
+input a
+input b
+input c
+gate AND a b n
+gate AND n c y
+output y
