@@ -16,6 +16,26 @@ pub struct TestPattern {
     pub covers: Vec<usize>,
 }
 
+/// 按门类型统计的覆盖率。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CoverageStat {
+    /// 该类型门的引脚故障总数。
+    pub total: usize,
+    /// 其中可测的数量。
+    pub testable: usize,
+}
+
+impl CoverageStat {
+    /// 覆盖率；没有故障时记为 1.0。
+    pub fn coverage(&self) -> f64 {
+        if self.total == 0 {
+            1.0
+        } else {
+            self.testable as f64 / self.total as f64
+        }
+    }
+}
+
 /// ATPG 结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct AtpgReport {
@@ -29,6 +49,8 @@ pub struct AtpgReport {
     pub untestable: Vec<Fault>,
     /// 覆盖率：`testable / faults`。
     pub coverage: f64,
+    /// 按门类型（`And` / `Or` / ...）的覆盖统计。
+    pub by_gate_kind: BTreeMap<&'static str, CoverageStat>,
 }
 
 /// 生成 stuck-at 测试向量。
@@ -87,12 +109,27 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
     } else {
         testable as f64 / faults.len() as f64
     };
+    let kind_of: BTreeMap<String, &'static str> = circuit
+        .gates
+        .iter()
+        .map(|gate| (gate.output.name().to_string(), gate.kind.as_str()))
+        .collect();
+    let mut by_gate_kind: BTreeMap<&'static str, CoverageStat> = BTreeMap::new();
+    for fault in &faults {
+        let kind = kind_of.get(&fault.gate).copied().unwrap_or("UNKNOWN");
+        let stat = by_gate_kind.entry(kind).or_default();
+        stat.total += 1;
+        if fault.observable {
+            stat.testable += 1;
+        }
+    }
     Ok(AtpgReport {
         faults,
         patterns,
         testable,
         untestable,
         coverage,
+        by_gate_kind,
     })
 }
 
@@ -156,6 +193,24 @@ mod tests {
             "AND 的门输出到不了主输出"
         );
         assert!((report.coverage - 2.0 / 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coverage_breaks_down_by_gate_kind() {
+        let mut c = Circuit::new("dead");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_gate(Gate::new(GateKind::And, vec![sig("a"), sig("b")], sig("n")));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("out")));
+        c.add_output(sig("out"));
+
+        let report = generate_tests(&c, Algebra::Kleene).unwrap();
+        let and = report.by_gate_kind.get("AND").copied().unwrap_or_default();
+        assert_eq!((and.testable, and.total), (0, 4));
+        assert_eq!(and.coverage(), 0.0);
+        let buf = report.by_gate_kind.get("BUF").copied().unwrap_or_default();
+        assert_eq!((buf.testable, buf.total), (2, 2));
+        assert!((buf.coverage() - 1.0).abs() < 1e-9);
     }
 
     #[test]

@@ -1042,6 +1042,18 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                 "total_faults": report.faults.len(),
                 "testable": report.testable,
                 "coverage": report.coverage,
+                "by_gate_kind": report
+                    .by_gate_kind
+                    .iter()
+                    .map(|(kind, stat)| (
+                        kind.to_string(),
+                        serde_json::json!({
+                            "total": stat.total,
+                            "testable": stat.testable,
+                            "coverage": stat.coverage(),
+                        }),
+                    ))
+                    .collect::<BTreeMap<_, _>>(),
                 "patterns": report
                     .patterns
                     .iter()
@@ -1076,6 +1088,22 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                 report.faults.len(),
                 report.patterns.len()
             );
+            let kinds = report
+                .by_gate_kind
+                .iter()
+                .map(|(kind, stat)| {
+                    format!(
+                        "{kind} {}/{}（{:.1}%）",
+                        stat.testable,
+                        stat.total,
+                        stat.coverage() * 100.0
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("，");
+            if !kinds.is_empty() {
+                println!("按门类型：{kinds}");
+            }
             for (i, pattern) in report.patterns.iter().enumerate() {
                 let inputs = pattern
                     .inputs
