@@ -112,6 +112,14 @@ MUTANTS = [
         "filter": "untestable_reasons",
     },
     {
+        "name": "atpg: 精确覆盖递归错误清除已覆盖位",
+        "file": "crates/trit-circuit/src/atpg.rs",
+        "old": "        search_cover(uncovered & !faults, chosen, best, sets, max_gain, budget);",
+        "new": "        search_cover(uncovered & faults, chosen, best, sets, max_gain, budget);",
+        "pkg": "trit-circuit",
+        "filter": "minimum_cover_matches_bruteforce",
+    },
+    {
         "name": "bdd: 频率降序写反",
         "file": "crates/trit-bdd/src/lib.rs",
         "old": "                    cr.cmp(&cl)",

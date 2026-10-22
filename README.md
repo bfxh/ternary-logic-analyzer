@@ -213,6 +213,7 @@ python -m http.server 8765 --directory playground
 `masked`（到得了但被遮蔽）。
 覆盖率同时按门类型拆分（`按门类型：AND 4/4（100.0%）…`），JSON 里是 `by_gate_kind`。
 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。
+故障数 ≤ 64 且向量数 ≤ 256 时再跑精确最小覆盖（`optimal`，DFS + 下界剪枝，10 万节点预算）。
 
 单向量传播（不枚举 3^n）：`trit circuit examples/and_gate.net --assign "a=X,b=0"`。
 输出每根信号取值、主输出上 `X` 的来源主输入，以及被遮蔽的门（`X & 0 = 0`、`X | 1 = 1`；

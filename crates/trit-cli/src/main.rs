@@ -1077,6 +1077,7 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                 "testable": report.testable,
                 "coverage": report.coverage,
                 "exhaustive": report.exhaustive,
+                "optimal": report.optimal,
                 "by_gate_kind": report
                     .by_gate_kind
                     .iter()
@@ -1122,7 +1123,9 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                 report.testable,
                 report.faults.len(),
                 report.patterns.len(),
-                if report.exhaustive {
+                if report.optimal {
+                    "精确最小"
+                } else if report.exhaustive {
                     "全向量搜索"
                 } else {
                     "见证贪心"

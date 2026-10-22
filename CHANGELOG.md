@@ -10,6 +10,8 @@
 - `AtpgReport::by_gate_kind`：覆盖率按门类型拆分（table 与 JSON 都输出）。
 - BDD 变量排序：`VarOrder`（appearance / reverse / frequency / frequency-asc）、`order_variables`、
   `equivalent_bdd_with_order`、`equivalent_bdd_best`；CLI `equiv --bdd-order`。
+- ATPG 精确最小覆盖：故障 ≤ 64、向量 ≤ 256 时用 DFS + 下界剪枝求最小测试集
+  （`AtpgReport::optimal`），超预算退回贪心。
 - ATPG 覆盖搜索：小规模电路枚举全部 `2^n` 向量做贪心覆盖（`AtpgReport::exhaustive`），
   可用一个向量覆盖多个故障（三个独立 BUF 从 4 个向量降到 2 个）。
 - 不可测原因分类：`redundant` / `unobserved` / `masked`，`trit circuit` 与 `trit atpg` 的
