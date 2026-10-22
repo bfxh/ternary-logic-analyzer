@@ -27,7 +27,7 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-core` | `Ternary`、K3/Ł3/B3、AST、解析器、位并行 `TriBit`、位切片 `TriVec` |
 | `trit-eval` | 求值、真值表、穷举等价、化简 |
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
-| `trit-circuit` | 组合网表 X 传播、stuck-at 可测性 |
+| `trit-circuit` | 组合网表 X 传播、stuck-at 可测性、ATPG 测试向量 |
 | `trit-belnap` | Belnap 四值（T/F/B/N）的 opt-in 语义 |
 | `trit-wasm` | WASM 绑定：给 `playground/` 的求值、真值表、等价 |
 | `trit-bdd` | BDD（canonical）等价判定、三值量化 |

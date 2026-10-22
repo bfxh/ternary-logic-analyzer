@@ -1,27 +1,26 @@
 # Changelog
 
-## [未发布]
+## [0.7.0] - 2026-10-22
+
+ATPG 与 BDD 的一批新能力；`Fault` 结构体有破坏性变更。
 
 ### Added
 
 - `trit atpg <netlist>` 与 `trit_circuit::generate_tests`：门引脚 stuck-at 的测试向量生成
-  （贪心集合覆盖）+ 覆盖率报告。
-- `Fault::witness`（首个二进制区分向量）、`Fault::reason` 与 `Circuit::decode_binary`。
-- `AtpgReport::by_gate_kind`：覆盖率按门类型拆分（table 与 JSON 都输出）。
-- `quantify_bdd_with_order` / `quantify_bdd_best`，CLI `quantify --bdd-order`；JSON 输出所选排序。
-- BDD 节点预算：`BddLimits`（默认 100 万节点/单个 BDD）与 `equivalent_bdd_with_limits`；超限返回
-  `BddError::BudgetExceeded`，构造过程逐步检查。
-- BDD 变量排序：`VarOrder`（appearance / reverse / frequency / frequency-asc）、`order_variables`、
-  `equivalent_bdd_with_order`、`equivalent_bdd_best`；CLI `equiv --bdd-order`。
-- ATPG 精确最小覆盖：故障 ≤ 64、向量 ≤ 256 时用 DFS + 下界剪枝求最小测试集
-  （`AtpgReport::optimal`），超预算退回贪心。
-- ATPG 覆盖搜索：小规模电路枚举全部 `2^n` 向量做贪心覆盖（`AtpgReport::exhaustive`），
-  可用一个向量覆盖多个故障（三个独立 BUF 从 4 个向量降到 2 个）。
-- 不可测原因分类：`redundant` / `unobserved` / `masked`，`trit circuit` 与 `trit atpg` 的
-  table/JSON 都会输出。
+  （贪心集合覆盖）+ 覆盖率报告（table / JSON）。
+- `AtpgReport::by_gate_kind`：覆盖率按门类型拆分；`exhaustive` 标记是否做了全 `2^n` 搜索；
+  `optimal` 标记是否为精确最小覆盖（故障 ≤ 64、向量 ≤ 256 时用 DFS + 下界剪枝）。
+- `Fault::witness`（首个二进制区分向量）、`Fault::reason`（`redundant` / `unobserved` / `masked`）
+  与 `Circuit::decode_binary`；`trit circuit` 同步输出原因。
+- `VarOrder`（appearance / reverse / frequency / frequency-asc）、`order_variables`、
+  `equivalent_bdd_with_order`、`equivalent_bdd_best`、`quantify_bdd_with_order`、`quantify_bdd_best`；
+  CLI `equiv --bdd-order` 与 `quantify --bdd-order`。
+- `BddLimits`（默认 100 万节点/单个 BDD）与 `equivalent_bdd_with_limits`；超限返回
+  `BddError::BudgetExceeded`，所有 BDD 构造点都做 O(1) 检查。
 
-### Changed
+### Changed（破坏性）
 
+- `Fault` 新增 `witness` 与 `reason` 字段：用结构体字面量构造 `Fault` 的代码需要补字段。
 - stuck-at 可测性判定改用 `2^n` 二进制测试向量；`X` 输入不是物理测试向量，`analyze` 的
   `observable` 与 ATPG 口径一致。
 - 主输入超过 16 时故障分析返回 `CircuitError::TooManyInputs`。
