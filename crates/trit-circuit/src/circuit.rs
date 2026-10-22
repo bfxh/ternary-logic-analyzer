@@ -19,7 +19,9 @@ use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
 /// 电路中的一个信号（节点）。
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Signal(pub String);
 
 impl Signal {
@@ -131,7 +133,7 @@ impl GateKind {
 }
 
 /// 一条电路连接：门 → 输出信号，输入为信号列表。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Gate {
     /// 门类型。
     pub kind: GateKind,
@@ -213,7 +215,7 @@ pub struct Fault {
 pub type FaultReport = (Vec<GateSignalPair>, Vec<Fault>);
 
 /// 一个电路。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Circuit {
     /// 电路名。
     pub name: String,

@@ -111,6 +111,16 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, NetlistError> {
     Ok(circuit)
 }
 
+/// 序列化为 JSON（字段与 [`Circuit`] 一致）。
+pub fn to_json(circuit: &Circuit) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(circuit)
+}
+
+/// 从 JSON 读取电路；结构合法性留给 `analyze` 校验。
+pub fn from_json(text: &str) -> Result<Circuit, serde_json::Error> {
+    serde_json::from_str(text)
+}
+
 /// 把电路序列化回网表文本（`parse_netlist` 的逆操作）。
 pub fn to_netlist(circuit: &Circuit) -> String {
     let mut out = String::new();
@@ -174,6 +184,15 @@ mod tests {
             parse_netlist("input a\ninput b\ngate AND a b y\n").unwrap_err(),
             NetlistError::NoOutputs
         );
+    }
+
+    #[test]
+    fn json_round_trip() {
+        let circuit = parse_netlist(AND).unwrap();
+        let json = to_json(&circuit).unwrap();
+        assert!(json.contains("\"inputs\""), "{json}");
+        assert!(json.contains("\"And\""), "{json}");
+        assert_eq!(from_json(&json).unwrap(), circuit);
     }
 
     #[test]

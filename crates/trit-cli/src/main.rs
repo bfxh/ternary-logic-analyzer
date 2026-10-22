@@ -167,6 +167,17 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 网表格式转换：text <-> json。
+    Netlist {
+        /// 输入文件。
+        path: std::path::PathBuf,
+        /// 输入格式：`text`（默认）或 `json`。
+        #[arg(long, default_value = "text")]
+        from: String,
+        /// 输出格式：`json`（默认）或 `text`。
+        #[arg(long, default_value = "json")]
+        to: String,
+    },
     /// 验证三值决策表策略文件。
     Verify {
         /// 策略 JSON 路径。
@@ -284,6 +295,7 @@ fn main() -> Result<()> {
             format,
         } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref()),
         Commands::Atpg { path, format } => cmd_atpg(&path, format, &cli.algebra),
+        Commands::Netlist { path, from, to } => cmd_netlist(&path, &from, &to),
         Commands::Verify {
             path,
             engine,
@@ -1091,6 +1103,26 @@ fn cmd_circuit(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// `netlist` 子命令：网表文本与 JSON 互转。
+fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
+    let circuit = match from {
+        "text" => {
+            parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?
+        }
+        "json" => trit_circuit::netlist::from_json(&text)
+            .with_context(|| format!("JSON 解析失败：{}", path.display()))?,
+        other => bail!("未知输入格式 {other:?}，可选 text / json"),
+    };
+    match to {
+        "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)),
+        "json" => println!("{}", trit_circuit::netlist::to_json(&circuit)?),
+        other => bail!("未知输出格式 {other:?}，可选 text / json"),
     }
     Ok(())
 }

@@ -8,6 +8,7 @@
 - `trit_circuit::netlist`：`parse_netlist` / `to_netlist` 从 CLI 下沉到库（可往返）。
 - WASM `atpg_js(netlist, algebra)`：浏览器里直接跑 ATPG，返回 JSON。
 - `satisfiable_bdd_with_order` / `premise_counterexample_bdd_with_order`，策略验证 `--bdd-order`。
+- 网表 JSON 互转：`trit_circuit::netlist::{to_json, from_json}` 与 CLI `trit netlist`。
 - ATPG 随机电路属性测试：每个向量必须真的检出它声称覆盖的故障。
 
 ## [0.7.0] - 2026-10-22

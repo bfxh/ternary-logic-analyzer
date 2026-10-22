@@ -9,4 +9,4 @@ pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
     SimulationRow, UntestableReason, analyze, propagate,
 };
-pub use netlist::{NetlistError, parse_netlist, to_netlist};
+pub use netlist::{NetlistError, from_json, parse_netlist, to_json, to_netlist};

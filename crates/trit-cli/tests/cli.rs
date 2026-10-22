@@ -43,7 +43,8 @@ fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "belnap", "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "netlist", "belnap",
+        "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }
@@ -426,4 +427,13 @@ fn verify_accepts_bdd_order() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("OK"), "{stdout}");
     assert!(stdout.contains("2 条断言"), "{stdout}");
+}
+
+#[test]
+fn netlist_converts_text_to_json() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (stdout, stderr, code) = run(&["netlist", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"inputs\""), "{stdout}");
+    assert!(stdout.contains("\"And\""), "{stdout}");
 }
