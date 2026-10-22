@@ -242,6 +242,8 @@ python -m http.server 8765 --directory playground
 输出覆盖率、向量数与不可测故障。可测性判定基于 `2^n` 二进制向量；`X` 输入不是物理测试向量，不计入。
 不可测故障会标注原因：`redundant`（固定该引脚不改变门输出）、`unobserved`（到不了主输出）、
 `masked`（到得了但被遮蔽）。
+每个向量还标出 X（don't-care）位：翻转这些输入不会丢掉该向量已覆盖的任何故障；
+JSON 里是 `dont_care` / `dont_care_bits` / `input_bits`，table 里显示为 `b=X`。
 覆盖率同时按门类型拆分（`按门类型：AND 4/4（100.0%）…`），JSON 里是 `by_gate_kind`。
 `--format csv` 导出 `pattern,<输入…>,covered`，便于喂给外部仿真器。
 主输入 ≤ 8 且 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。

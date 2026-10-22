@@ -10,10 +10,12 @@ use crate::circuit::{Circuit, CircuitError, Fault, analyze_faults};
 /// 一个测试向量，以及它覆盖的故障下标（对应 [`AtpgReport::faults`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestPattern {
-    /// 二进制主输入赋值。
+    /// 二进制主输入赋值（具体值）。
     pub inputs: BTreeMap<String, Ternary>,
     /// 被这个向量首次覆盖的故障下标。
     pub covers: Vec<usize>,
+    /// 可以任意填 0/1 而不影响覆盖的输入（X don't-care）。
+    pub dont_care: Vec<String>,
 }
 
 /// 按门类型统计的覆盖率。
@@ -55,6 +57,10 @@ pub struct AtpgReport {
     pub exhaustive: bool,
     /// 测试集是否为精确最小覆盖（仅小规模实例尝试）。
     pub optimal: bool,
+    /// 所有向量里 X（don't-care）位的总数。
+    pub dont_care_bits: usize,
+    /// 所有向量的输入位总数。
+    pub input_bits: usize,
 }
 
 fn witness_map(faults: &[Fault]) -> BTreeMap<u64, Vec<usize>> {
@@ -109,6 +115,67 @@ fn full_coverage_matrix(
         }
     }
     by_mask
+}
+
+fn annotate_dont_care(
+    circuit: &Circuit,
+    alg: Algebra,
+    faults: &[Fault],
+    patterns: &mut [TestPattern],
+) {
+    let Ok(mut simulator) = crate::circuit::Simulator::new(circuit, alg) else {
+        return;
+    };
+    let outputs = simulator.output_indices().to_vec();
+    let names: Vec<String> = circuit
+        .inputs
+        .iter()
+        .map(|signal| signal.name().to_string())
+        .collect();
+    let gate_of: BTreeMap<&str, usize> = circuit
+        .gates
+        .iter()
+        .enumerate()
+        .map(|(index, gate)| (gate.output.name(), index))
+        .collect();
+    for pattern in patterns.iter_mut() {
+        let mut mask = 0u64;
+        for (bit, name) in names.iter().enumerate() {
+            if pattern.inputs.get(name) == Some(&Ternary::True) {
+                mask |= 1 << bit;
+            }
+        }
+        let mut dont_care = Vec::new();
+        for (bit, name) in names.iter().enumerate() {
+            let flipped = mask ^ (1u64 << bit);
+            let values = simulator.eval_binary(flipped, None);
+            let good: Vec<Ternary> = outputs.iter().map(|&index| values[index]).collect();
+            let mut keeps_cover = true;
+            for &index in &pattern.covers {
+                let fault = &faults[index];
+                let Some(&gate_index) = gate_of.get(fault.gate.as_str()) else {
+                    keeps_cover = false;
+                    break;
+                };
+                let bad = simulator.eval_binary(
+                    flipped,
+                    Some((gate_index, fault.input_index, fault.stuck_at)),
+                );
+                if !outputs
+                    .iter()
+                    .enumerate()
+                    .any(|(slot, &signal)| bad[signal] != good[slot])
+                {
+                    keeps_cover = false;
+                    break;
+                }
+            }
+            if keeps_cover {
+                dont_care.push(name.clone());
+            }
+        }
+        pattern.dont_care = dont_care;
+    }
 }
 
 fn minimum_cover(sets: &[(u64, u64)], full: u64, budget: usize) -> Option<Vec<u64>> {
@@ -204,6 +271,7 @@ fn greedy_patterns(
         patterns.push(TestPattern {
             inputs: circuit.decode_binary(mask),
             covers,
+            dont_care: Vec::new(),
         });
     }
     patterns
@@ -251,6 +319,7 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
                 patterns.push(TestPattern {
                     inputs: circuit.decode_binary(mask),
                     covers,
+                    dont_care: Vec::new(),
                 });
             }
         }
@@ -258,7 +327,10 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
     if !optimal {
         patterns = greedy_patterns(circuit, &by_mask, &faults);
     }
+    annotate_dont_care(circuit, alg, &faults, &mut patterns);
 
+    let dont_care_bits: usize = patterns.iter().map(|pattern| pattern.dont_care.len()).sum();
+    let input_bits = patterns.len() * circuit.input_count();
     let untestable: Vec<Fault> = faults.iter().filter(|f| !f.observable).cloned().collect();
     let coverage = if faults.is_empty() {
         1.0
@@ -288,6 +360,8 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
         by_gate_kind,
         exhaustive,
         optimal,
+        dont_care_bits,
+        input_bits,
     })
 }
 
@@ -392,6 +466,33 @@ mod tests {
             }
         }
         best
+    }
+
+    #[test]
+    fn dont_care_marks_irrelevant_inputs() {
+        // b 未参与任何门：对 BUF 引脚故障完全 don't-care。
+        let mut c = Circuit::new("spare");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("y")));
+        c.add_output(sig("y"));
+        let report = generate_tests(&c, Algebra::Kleene).unwrap();
+        let index = report
+            .faults
+            .iter()
+            .position(|fault| fault.gate == "y" && fault.input == "a")
+            .unwrap();
+        let pattern = report
+            .patterns
+            .iter()
+            .find(|pattern| pattern.covers.contains(&index))
+            .unwrap();
+        assert!(
+            pattern.dont_care.contains(&"b".to_string()),
+            "b 未参与逻辑，应可任意填：{pattern:?}"
+        );
+        assert!(report.dont_care_bits > 0);
+        assert_eq!(report.input_bits, report.patterns.len() * 2);
     }
 
     #[test]

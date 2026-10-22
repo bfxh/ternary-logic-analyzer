@@ -1316,6 +1316,8 @@ fn cmd_check(
                     "unknown_output_combinations": report.unknown_output_combinations,
                 })),
                 "atpg": atpg.as_ref().map(|report| serde_json::json!({
+                    "dont_care_bits": report.dont_care_bits,
+                    "input_bits": report.input_bits,
                     "coverage": report.coverage,
                     "testable": report.testable,
                     "total": report.faults.len(),
@@ -1487,6 +1489,8 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) 
                 "total_faults": report.faults.len(),
                 "testable": report.testable,
                 "coverage": report.coverage,
+                "dont_care_bits": report.dont_care_bits,
+                "input_bits": report.input_bits,
                 "exhaustive": report.exhaustive,
                 "optimal": report.optimal,
                 "by_gate_kind": report
@@ -1511,6 +1515,7 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) 
                             .map(|(k, v)| (k.clone(), v.as_char().to_string()))
                             .collect::<BTreeMap<_, _>>(),
                         "covers": p.covers,
+                        "dont_care": p.dont_care,
                     }))
                     .collect::<Vec<_>>(),
                 "untestable": report
@@ -1586,7 +1591,13 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) 
                 let inputs = pattern
                     .inputs
                     .iter()
-                    .map(|(name, value)| format!("{name}={}", value.as_char()))
+                    .map(|(name, value)| {
+                        if pattern.dont_care.contains(name) {
+                            format!("{name}=X")
+                        } else {
+                            format!("{name}={}", value.as_char())
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(" ");
                 println!("#{} {inputs}  → {} 个故障", i + 1, pattern.covers.len());
