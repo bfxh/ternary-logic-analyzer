@@ -3,5 +3,6 @@
 pub mod circuit;
 
 pub use circuit::{
-    Circuit, CircuitError, CircuitReport, Gate, GateKind, Signal, SimulationRow, analyze,
+    Circuit, CircuitError, CircuitReport, Gate, GateKind, Propagation, Signal, SimulationRow,
+    analyze, propagate,
 };

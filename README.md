@@ -156,6 +156,10 @@ $ trit quantify "a | !a" --vars a --kind forall --binary a
 `trit circuit examples/and_gate.net`：输出含 `X` 的输入组合数、各输出值域、冗余输入与 stuck-at 不可测故障。
 只支持组合逻辑，不做时序/时钟。
 
+单向量传播（不枚举 3^n）：`trit circuit examples/and_gate.net --assign "a=X,b=0"`。
+输出每根信号取值、主输出上 `X` 的来源主输入，以及被遮蔽的门（`X & 0 = 0`、`X | 1 = 1`；
+Ł3 的 `X ⊕ X = 1` 也算“确定”）。`--assign` 必须给全所有主输入，缺一个直接报错。
+
 ## 构建期验证（`trit verify`）
 
 把决策表写成 JSON，断言必须在**所有合法赋值**上恒真；失败时给出充分最小反例，退出码 1。

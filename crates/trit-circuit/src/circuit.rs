@@ -9,6 +9,9 @@
 //! - **未被遮蔽的未知传播**：`X` 是否真的传到了输出；
 //! - **冗余输入**：某输入改成相反值时输出不变（可做测试点削减）；
 //! - **不可测故障**：某输入的取值翻转无法被输出观测到。
+//!
+//! `propagate` 是单向量版本：给定一条含 `X` 的主输入赋值，只做一遍拓扑传播，
+//! 报告每根信号取值、被遮蔽的门，以及每个输出上 `X` 的来源主输入。
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -274,6 +277,12 @@ pub enum CircuitError {
     /// 信号既未声明为输入，也没有驱动它的门。
     #[error("信号 {0} 未被任何门驱动，也不是主输入")]
     UndrivenSignal(String),
+    /// 输入向量缺少主输入。
+    #[error("输入向量缺少主输入 {0}")]
+    MissingInput(String),
+    /// 输入向量里出现了非主输入。
+    #[error("输入向量包含非主输入信号 {0}")]
+    UnknownInput(String),
 }
 
 /// 对电路做一次完整分析。
@@ -344,6 +353,120 @@ pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, Circuit
         redundant_inputs: redundant,
         untestable_faults: untestable,
         output_domains,
+    })
+}
+
+/// 一条输入向量下的三值传播结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Propagation {
+    /// 使用的语义。
+    pub algebra: Algebra,
+    /// 主输入取值（可含 `X`）。
+    pub inputs: BTreeMap<String, Ternary>,
+    /// 全部信号取值（主输入 + 门输出）。
+    pub signals: BTreeMap<String, Ternary>,
+    /// 主输出取值。
+    pub outputs: BTreeMap<String, Ternary>,
+    /// 主输出为 `X` 时，可能把 `X` 带进来的主输入。
+    pub origins: BTreeMap<String, BTreeSet<String>>,
+    /// 有 `X` 输入、但输出被遮蔽（或按代数确定）的门输出。
+    pub masked: Vec<String>,
+}
+
+impl Propagation {
+    /// 某输出是否为未知。
+    pub fn output_is_unknown(&self, output: &str) -> bool {
+        self.outputs.get(output).is_some_and(|v| v.is_unknown())
+    }
+}
+
+/// 给定一条主输入赋值，做一遍三值传播。
+///
+/// - 必须给全所有主输入；缺一个就报 [`CircuitError::MissingInput`]。
+/// - `masked` 记录“输入有 `X`、输出却确定”的门：K3 的 `X & 0` / `X | 1`、
+///   Ł3 的 `X ⊕ X = 1` 都在内。
+/// - `origins` 是**可能**来源（保守并集），不是最小依赖；已知输出为空集。
+pub fn propagate(
+    circuit: &Circuit,
+    assignment: &BTreeMap<String, Ternary>,
+    alg: Algebra,
+) -> Result<Propagation, CircuitError> {
+    validate(circuit)?;
+    for inp in &circuit.inputs {
+        if !assignment.contains_key(inp.name()) {
+            return Err(CircuitError::MissingInput(inp.name().to_string()));
+        }
+    }
+    for key in assignment.keys() {
+        if !circuit.inputs.iter().any(|i| i.name() == key) {
+            return Err(CircuitError::UnknownInput(key.clone()));
+        }
+    }
+
+    let mut signals: BTreeMap<String, Ternary> = BTreeMap::new();
+    let mut origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for inp in &circuit.inputs {
+        let value = assignment[inp.name()];
+        signals.insert(inp.name().to_string(), value);
+        let from = if value.is_unknown() {
+            BTreeSet::from([inp.name().to_string()])
+        } else {
+            BTreeSet::new()
+        };
+        origins.insert(inp.name().to_string(), from);
+    }
+
+    let mut masked: Vec<String> = Vec::new();
+    for idx in topological_order(circuit) {
+        let gate = &circuit.gates[idx];
+        let ins: Vec<Ternary> = gate
+            .inputs
+            .iter()
+            .map(|s| signals.get(s.name()).copied().unwrap_or(Ternary::Unknown))
+            .collect();
+        let value = if gate.kind == GateKind::Const {
+            gate.const_value.unwrap_or(Ternary::False)
+        } else {
+            gate.kind.eval(&ins, alg)
+        };
+        let inherited: BTreeSet<String> = gate
+            .inputs
+            .iter()
+            .filter_map(|s| origins.get(s.name()))
+            .flatten()
+            .cloned()
+            .collect();
+        if value.is_unknown() {
+            origins.insert(gate.output.name().to_string(), inherited);
+        } else {
+            origins.insert(gate.output.name().to_string(), BTreeSet::new());
+            if ins.iter().any(|t| t.is_unknown()) {
+                masked.push(gate.output.name().to_string());
+            }
+        }
+        signals.insert(gate.output.name().to_string(), value);
+    }
+
+    let mut outputs: BTreeMap<String, Ternary> = BTreeMap::new();
+    let mut output_origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for o in &circuit.outputs {
+        outputs.insert(
+            o.name().to_string(),
+            signals.get(o.name()).copied().unwrap_or(Ternary::Unknown),
+        );
+        output_origins.insert(
+            o.name().to_string(),
+            origins.get(o.name()).cloned().unwrap_or_default(),
+        );
+    }
+
+    Ok(Propagation {
+        algebra: alg,
+        inputs: assignment.clone(),
+        signals,
+        outputs,
+        origins: output_origins,
+        masked,
     })
 }
 
@@ -461,23 +584,6 @@ fn detect_input_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, C
             continue;
         }
         for probe in &gate.inputs {
-            // 收集该输入在各组合下的取值与本门输出取值
-            let mut all: Vec<(Ternary, Ternary, Vec<Ternary>)> = Vec::new();
-            for combo in 0..total {
-                let base = simulate_combo(circuit, combo, alg);
-                let probe_val = base.get(probe.name()).copied().unwrap_or(Ternary::Unknown);
-                let gate_out = base
-                    .get(gate.output.name())
-                    .copied()
-                    .unwrap_or(Ternary::Unknown);
-                let outs: Vec<Ternary> = circuit
-                    .outputs
-                    .iter()
-                    .map(|o| base.get(o.name()).copied().unwrap_or(Ternary::Unknown))
-                    .collect();
-                all.push((probe_val, gate_out, outs));
-            }
-
             // 直接做法：对该输入分别注入 stuck-at-0 与 stuck-at-1，比较本门输出
             let mut gate_out_same = true;
             let mut observable_any = false;
@@ -706,5 +812,113 @@ mod tests {
         assert_eq!(GateKind::parse("and"), Some(GateKind::And));
         assert_eq!(GateKind::parse("XOR"), Some(GateKind::Xor));
         assert_eq!(GateKind::parse("nope"), None);
+    }
+
+    fn sig(name: &str) -> Signal {
+        Signal::new(name)
+    }
+
+    fn assignment(pairs: &[(&str, Ternary)]) -> BTreeMap<String, Ternary> {
+        pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn propagate_masks_x_on_and_then_passes_it() {
+        let c = and_circuit();
+        let masked = propagate(
+            &c,
+            &assignment(&[("a", Ternary::Unknown), ("b", Ternary::False)]),
+            Algebra::Kleene,
+        )
+        .unwrap();
+        assert_eq!(masked.outputs["out"], Ternary::False);
+        assert_eq!(masked.masked, vec!["out".to_string()]);
+        assert!(masked.origins["out"].is_empty(), "已知输出不该有 X 来源");
+
+        let passed = propagate(
+            &c,
+            &assignment(&[("a", Ternary::Unknown), ("b", Ternary::True)]),
+            Algebra::Kleene,
+        )
+        .unwrap();
+        assert_eq!(passed.outputs["out"], Ternary::Unknown);
+        assert!(passed.masked.is_empty());
+        assert_eq!(
+            passed.origins["out"],
+            BTreeSet::from(["a".to_string()]),
+            "X 应只归因到 a"
+        );
+    }
+
+    #[test]
+    fn propagate_lukasiewicz_cancels_x_xor() {
+        let mut c = Circuit::new("xor-self");
+        c.add_input(sig("a"));
+        c.add_gate(Gate::new(GateKind::Xor, vec![sig("a"), sig("a")], sig("y")));
+        c.add_output(sig("y"));
+        let assign = assignment(&[("a", Ternary::Unknown)]);
+
+        let k3 = propagate(&c, &assign, Algebra::Kleene).unwrap();
+        assert_eq!(k3.outputs["y"], Ternary::Unknown);
+        assert!(k3.masked.is_empty());
+
+        let l3 = propagate(&c, &assign, Algebra::Lukasiewicz).unwrap();
+        assert_eq!(l3.outputs["y"], Ternary::True, "Ł3: X ⊕ X = 1");
+        assert_eq!(l3.masked, vec!["y".to_string()]);
+        assert!(l3.origins["y"].is_empty());
+    }
+
+    #[test]
+    fn propagate_bochvar_poisons_known_zero() {
+        let c = and_circuit();
+        let p = propagate(
+            &c,
+            &assignment(&[("a", Ternary::Unknown), ("b", Ternary::False)]),
+            Algebra::Bochvar,
+        )
+        .unwrap();
+        assert_eq!(p.outputs["out"], Ternary::Unknown, "B3: X 毒化 0");
+        assert!(p.masked.is_empty());
+        assert_eq!(p.origins["out"], BTreeSet::from(["a".to_string()]));
+    }
+
+    #[test]
+    fn propagate_requires_every_primary_input() {
+        let c = and_circuit();
+        let err = propagate(&c, &assignment(&[("a", Ternary::True)]), Algebra::Kleene).unwrap_err();
+        assert!(matches!(err, CircuitError::MissingInput(ref s) if s == "b"));
+    }
+
+    #[test]
+    fn propagate_matches_exhaustive_simulation() {
+        let mut c = Circuit::new("mix");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_input(sig("c"));
+        c.add_gate(Gate::new(GateKind::Xor, vec![sig("a"), sig("b")], sig("t")));
+        c.add_gate(Gate::new(
+            GateKind::Nand,
+            vec![sig("t"), sig("c")],
+            sig("u"),
+        ));
+        c.add_gate(Gate::new(GateKind::Not, vec![sig("u")], sig("y")));
+        c.add_output(sig("y"));
+
+        for combo in 0..c.combination_count() {
+            let base = simulate_combo(&c, combo, Algebra::Kleene);
+            let assign: BTreeMap<String, Ternary> = c
+                .inputs
+                .iter()
+                .map(|i| (i.name().to_string(), base[i.name()]))
+                .collect();
+            let p = propagate(&c, &assign, Algebra::Kleene).unwrap();
+            for (name, value) in &p.signals {
+                assert_eq!(
+                    Some(value),
+                    base.get(name),
+                    "combo {combo} 信号 {name} 不一致"
+                );
+            }
+        }
     }
 }

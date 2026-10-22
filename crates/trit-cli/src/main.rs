@@ -7,12 +7,12 @@
 //! - `equiv`：判定两个表达式是否逻辑等价
 //! - `quantify`：对三值变量做存在/全称量化
 //! - `simplify`：化简表达式
-//! - `circuit`：分析三值门级网表
+//! - `circuit`：分析三值门级网表（`--assign` 对一条含 X 的输入向量做单遍传播）
 //! - `repl`：交互式会话
 
 mod output;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
@@ -141,6 +141,9 @@ enum Commands {
     Circuit {
         /// 网表文件路径。
         path: std::path::PathBuf,
+        /// 单向量传播：`a=1,b=X`（给全所有主输入）。
+        #[arg(long, value_name = "ASSIGN")]
+        assign: Option<String>,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -218,7 +221,11 @@ fn main() -> Result<()> {
             format,
             expand_implies,
         } => cmd_simplify(&expression, format, expand_implies, &cli.algebra),
-        Commands::Circuit { path, format } => cmd_circuit(&path, format, &cli.algebra),
+        Commands::Circuit {
+            path,
+            assign,
+            format,
+        } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref()),
         Commands::Verify { path, engine, json } => cmd_verify(&path, &engine, json),
         Commands::Repl { algebra } => {
             let alg_name = algebra.unwrap_or(cli.algebra);
@@ -783,12 +790,86 @@ fn cmd_simplify(
 /// output out
 /// gate AND a b out
 /// ```
-fn cmd_circuit(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()> {
+fn cmd_circuit(
+    path: &std::path::Path,
+    format: Format,
+    alg_name: &str,
+    assign: Option<&str>,
+) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
     let circuit =
         parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?;
+
+    if let Some(spec) = assign {
+        let parsed = parse_assignment(spec)?;
+        let mut assignment: BTreeMap<String, Ternary> = BTreeMap::new();
+        for name in parsed.variables() {
+            if let Some(value) = parsed.get(&name) {
+                assignment.insert(name, value);
+            }
+        }
+        if assignment.is_empty() {
+            bail!("--assign 不能为空");
+        }
+        let prop = trit_circuit::circuit::propagate(&circuit, &assignment, alg)
+            .with_context(|| format!("网表传播失败：{}", path.display()))?;
+        match format {
+            Format::Json => {
+                let chars = |m: &BTreeMap<String, Ternary>| {
+                    m.iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                serde_json::Value::String(v.as_char().to_string()),
+                            )
+                        })
+                        .collect::<serde_json::Map<String, serde_json::Value>>()
+                };
+                let obj = serde_json::json!({
+                    "circuit": circuit.name,
+                    "algebra": alg.as_str(),
+                    "assign": chars(&prop.inputs),
+                    "signals": chars(&prop.signals),
+                    "outputs": chars(&prop.outputs),
+                    "origins": prop.origins
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::Array(
+                            v.iter().map(|s| serde_json::Value::String(s.clone())).collect())))
+                        .collect::<serde_json::Map<String, serde_json::Value>>(),
+                    "masked": prop.masked,
+                });
+                println!("{}", serde_json::to_string_pretty(&obj)?);
+            }
+            _ => {
+                println!("传播：{}  [{}]", path.display(), alg.as_str());
+                println!("\n信号值：");
+                for (name, value) in &prop.signals {
+                    println!("  {name} = {}", value.as_char());
+                }
+                println!("\n输出：");
+                for (name, value) in &prop.outputs {
+                    if value.is_unknown() {
+                        let origins = prop.origins.get(name).cloned().unwrap_or_default();
+                        let list: Vec<&str> = origins.iter().map(|s| s.as_str()).collect();
+                        if list.is_empty() {
+                            println!("  {name} = X");
+                        } else {
+                            println!("  {name} = X（X 来源：{}）", list.join(", "));
+                        }
+                    } else {
+                        println!("  {name} = {}", value.as_char());
+                    }
+                }
+                if !prop.masked.is_empty() {
+                    println!("\n被遮蔽（输入含 X、输出确定）：{}", prop.masked.join(", "));
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let report = trit_circuit::circuit::analyze(&circuit, alg)
         .with_context(|| format!("网表分析失败：{}", path.display()))?;
 

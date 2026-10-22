@@ -215,6 +215,31 @@ fn circuit_rejects_malformed_netlist() {
 }
 
 #[test]
+fn circuit_propagates_x_assignment() {
+    let netlist =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/and_gate.net");
+    let path = netlist.to_str().unwrap();
+
+    let (stdout, _, code) = run(&["circuit", path, "--assign", "a=X,b=0"]);
+    assert_eq!(code, 0, "stdout was:\n{stdout}");
+    assert!(stdout.contains("y = 0"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("被遮蔽"), "stdout was:\n{stdout}");
+
+    let (stdout, _, code) = run(&["circuit", path, "--assign", "a=X,b=1"]);
+    assert_eq!(code, 0, "stdout was:\n{stdout}");
+    assert!(stdout.contains("X 来源：a"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn circuit_assign_requires_all_inputs() {
+    let netlist =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/and_gate.net");
+    let (_, stderr, code) = run(&["circuit", netlist.to_str().unwrap(), "--assign", "a=1"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("缺少主输入 b"), "stderr was: {stderr}");
+}
+
+#[test]
 fn unknown_algebra_is_rejected() {
     let (_, stderr, code) = run(&["-a", "nonsense", "table", "a"]);
     assert_ne!(code, 0);
