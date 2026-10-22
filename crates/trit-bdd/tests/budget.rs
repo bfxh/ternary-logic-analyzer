@@ -2,7 +2,10 @@
 
 use std::collections::HashSet;
 
-use trit_bdd::{BddError, BddLimits, equivalent_bdd, equivalent_bdd_with_limits};
+use trit_bdd::{
+    BddError, BddLimits, BddRequest, Quantifier, equivalent_bdd, equivalent_bdd_with_limits,
+    premise_counterexample_bdd_with, quantify_bdd_with, satisfiable_bdd_with,
+};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::parser::Parser;
@@ -32,4 +35,33 @@ fn budget_rejects_large_bdd() {
             .result
             .equivalent
     );
+}
+
+#[test]
+fn request_budget_applies_to_all_entries() {
+    let expr = parse("(a & b) | (c & d)");
+    let binary = HashSet::new();
+    let request = BddRequest {
+        order: None,
+        limits: BddLimits { max_nodes: 1 },
+    };
+    assert!(matches!(
+        satisfiable_bdd_with(&expr, Algebra::Kleene, &binary, &request),
+        Err(BddError::BudgetExceeded { .. })
+    ));
+    assert!(matches!(
+        premise_counterexample_bdd_with(&expr, &expr, Algebra::Kleene, &binary, &request),
+        Err(BddError::BudgetExceeded { .. })
+    ));
+    assert!(matches!(
+        quantify_bdd_with(
+            &expr,
+            &["a".to_string()],
+            Quantifier::Exists,
+            Algebra::Kleene,
+            &binary,
+            &request
+        ),
+        Err(BddError::BudgetExceeded { .. })
+    ));
 }

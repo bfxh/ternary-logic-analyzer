@@ -147,6 +147,7 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 BDD 节点预算默认 100 万（`BddLimits::default()`），任何一次构造超过上限即返回
 `BddError::BudgetExceeded`，不会无限膨胀；库调用可用 `equivalent_bdd_with_limits` 收紧或
 `BddLimits::UNLIMITED` 关闭。
+CLI 的 `equiv` / `quantify` / `verify --engine bdd` 都支持 `--bdd-max-nodes N`（0 表示不设上限）。
 
 ## 量化（`trit quantify`）
 

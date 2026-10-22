@@ -19,8 +19,8 @@ use std::io::{BufRead, Write};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use trit_bdd::{
-    Quantifier, VarOrder, equivalent_bdd, equivalent_bdd_best, equivalent_bdd_with_order,
-    order_variables, quantify_bdd, quantify_bdd_best, quantify_bdd_with_order,
+    BddLimits, BddRequest, Quantifier, VarOrder, equivalent_bdd_best_with_limits,
+    equivalent_bdd_with, order_variables, quantify_bdd_best_with_limits, quantify_bdd_with,
 };
 use trit_circuit::netlist::parse_netlist;
 use trit_core::algebra::Algebra;
@@ -98,6 +98,9 @@ enum Commands {
         /// BDD 变量排序：appearance（默认）/ reverse / frequency / frequency-asc / best。
         #[arg(long, value_name = "ORDER", default_value = "appearance")]
         bdd_order: String,
+        /// BDD 单图节点预算（0 表示不设上限）。
+        #[arg(long, value_name = "N", default_value_t = 1_000_000)]
+        bdd_max_nodes: usize,
         /// 穷举判定的变量数上限；超过则报错并提示 `--symbolic`。
         #[arg(long, default_value_t = 18)]
         max_vars: usize,
@@ -133,6 +136,9 @@ enum Commands {
         /// BDD 变量排序：appearance（默认）/ reverse / frequency / frequency-asc / best。
         #[arg(long, value_name = "ORDER", default_value = "appearance")]
         bdd_order: String,
+        /// BDD 单图节点预算（0 表示不设上限）。
+        #[arg(long, value_name = "N", default_value_t = 1_000_000)]
+        bdd_max_nodes: usize,
         /// JSON 输出。
         #[arg(long)]
         json: bool,
@@ -188,6 +194,9 @@ enum Commands {
         /// BDD 变量排序（仅 --engine bdd）：appearance（默认）/ reverse / frequency / frequency-asc。
         #[arg(long, value_name = "ORDER", default_value = "appearance")]
         bdd_order: String,
+        /// BDD 单图节点预算（仅 --engine bdd；0 表示不设上限）。
+        #[arg(long, value_name = "N", default_value_t = 1_000_000)]
+        bdd_max_nodes: usize,
         /// JSON 输出。
         #[arg(long)]
         json: bool,
@@ -243,6 +252,7 @@ fn main() -> Result<()> {
             symbolic,
             bdd,
             bdd_order,
+            bdd_max_nodes,
             max_vars,
             binary,
             binary_all,
@@ -257,6 +267,7 @@ fn main() -> Result<()> {
                 symbolic,
                 bdd,
                 bdd_order,
+                bdd_max_nodes,
                 max_vars,
                 binary,
                 binary_all,
@@ -271,6 +282,7 @@ fn main() -> Result<()> {
             binary,
             binary_all,
             bdd_order,
+            bdd_max_nodes,
             json,
         } => cmd_quantify(
             &expression,
@@ -281,6 +293,7 @@ fn main() -> Result<()> {
                 binary,
                 binary_all,
                 bdd_order,
+                bdd_max_nodes,
                 json,
             },
         ),
@@ -300,8 +313,9 @@ fn main() -> Result<()> {
             path,
             engine,
             bdd_order,
+            bdd_max_nodes,
             json,
-        } => cmd_verify(&path, &engine, &bdd_order, json),
+        } => cmd_verify(&path, &engine, &bdd_order, bdd_max_nodes, json),
         Commands::Belnap { cmd } => cmd_belnap(cmd),
         Commands::Repl { algebra } => {
             let alg_name = algebra.unwrap_or(cli.algebra);
@@ -377,6 +391,7 @@ struct EquivOptions {
     symbolic: bool,
     bdd: bool,
     bdd_order: String,
+    bdd_max_nodes: usize,
     max_vars: usize,
     binary: Option<String>,
     binary_all: bool,
@@ -395,6 +410,7 @@ fn cmd_equiv(
         symbolic,
         bdd,
         bdd_order,
+        bdd_max_nodes,
         max_vars,
         binary: binary_list,
         binary_all,
@@ -492,11 +508,19 @@ fn cmd_equiv(
     } else {
         None
     };
+    let limits = if bdd_max_nodes == 0 {
+        BddLimits::UNLIMITED
+    } else {
+        BddLimits {
+            max_nodes: bdd_max_nodes,
+        }
+    };
     let mut bdd_order_used = None;
     let (result, method, bdd_nodes) = if bdd {
         let verdict = match bdd_order.as_str() {
             "best" => {
-                let (verdict, order) = equivalent_bdd_best(&a, &b, alg, &binary)?;
+                let (verdict, order) =
+                    equivalent_bdd_best_with_limits(&a, &b, alg, &binary, limits)?;
                 bdd_order_used = Some(order.as_str());
                 verdict
             }
@@ -504,12 +528,12 @@ fn cmd_equiv(
                 let order = VarOrder::parse(name)
                     .ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?;
                 bdd_order_used = Some(order.as_str());
-                if order == VarOrder::Appearance {
-                    equivalent_bdd(&a, &b, alg, &binary)?
-                } else {
-                    let vars = order_variables(&a, &b, order);
-                    equivalent_bdd_with_order(&a, &b, alg, &binary, &vars)?
-                }
+                let vars = (order != VarOrder::Appearance).then(|| order_variables(&a, &b, order));
+                let request = BddRequest {
+                    order: vars.as_deref(),
+                    limits,
+                };
+                equivalent_bdd_with(&a, &b, alg, &binary, &request)?
             }
         };
         (verdict.result, "bdd", Some(verdict.nodes))
@@ -674,6 +698,7 @@ struct QuantifyOptions<'a> {
     binary: Option<String>,
     binary_all: bool,
     bdd_order: String,
+    bdd_max_nodes: usize,
     json: bool,
 }
 
@@ -684,6 +709,7 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
         binary: binary_list,
         binary_all,
         bdd_order,
+        bdd_max_nodes,
         json,
     } = opts;
     let Some(kind) = Quantifier::parse(kind) else {
@@ -709,26 +735,32 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
     if let Some(list) = binary_list {
         binary.extend(parse_var_list(&list, &all, "--binary")?);
     }
+    let limits = if bdd_max_nodes == 0 {
+        BddLimits::UNLIMITED
+    } else {
+        BddLimits {
+            max_nodes: bdd_max_nodes,
+        }
+    };
     let (result, used_order) = match bdd_order.as_str() {
         "best" => {
-            let (result, order) = quantify_bdd_best(&expr, &quantified, kind, alg, &binary)?;
+            let (result, order) =
+                quantify_bdd_best_with_limits(&expr, &quantified, kind, alg, &binary, limits)?;
             (result, order.as_str())
         }
         name => {
             let order =
                 VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?;
-            if order == VarOrder::Appearance {
-                (
-                    quantify_bdd(&expr, &quantified, kind, alg, &binary)?,
-                    order.as_str(),
-                )
-            } else {
-                let vars = order_variables(&expr, &expr, order);
-                (
-                    quantify_bdd_with_order(&expr, &quantified, kind, alg, &binary, &vars)?,
-                    order.as_str(),
-                )
-            }
+            let vars =
+                (order != VarOrder::Appearance).then(|| order_variables(&expr, &expr, order));
+            let request = BddRequest {
+                order: vars.as_deref(),
+                limits,
+            };
+            (
+                quantify_bdd_with(&expr, &quantified, kind, alg, &binary, &request)?,
+                order.as_str(),
+            )
         }
     };
     let holds = match kind {
@@ -794,7 +826,13 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
 }
 
 /// `verify` 子命令。
-fn cmd_verify(path: &std::path::Path, engine: &str, bdd_order: &str, json: bool) -> Result<()> {
+fn cmd_verify(
+    path: &std::path::Path,
+    engine: &str,
+    bdd_order: &str,
+    bdd_max_nodes: usize,
+    json: bool,
+) -> Result<()> {
     let Some(engine) = Engine::parse(engine) else {
         bail!("未知引擎 {engine:?}，可选 sat / bdd");
     };
@@ -804,9 +842,16 @@ fn cmd_verify(path: &std::path::Path, engine: &str, bdd_order: &str, json: bool)
             Some(VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?)
         }
     };
+    let limits = if bdd_max_nodes == 0 {
+        BddLimits::UNLIMITED
+    } else {
+        BddLimits {
+            max_nodes: bdd_max_nodes,
+        }
+    };
     let policy = Policy::load(path)?;
     let assumptions = policy.assumptions.len();
-    let results = policy.verify_with_bdd_order(engine, order)?;
+    let results = policy.verify_with_bdd_config(engine, order, limits)?;
     let failed = results.iter().filter(|r| !r.holds).count();
     if json {
         let assertions = results

@@ -24,11 +24,10 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-pub use trit_bdd::VarOrder;
+pub use trit_bdd::{BddLimits, VarOrder};
 
 use trit_bdd::{
-    BddError, order_variables, premise_counterexample_bdd, premise_counterexample_bdd_with_order,
-    satisfiable_bdd, satisfiable_bdd_with_order,
+    BddError, BddRequest, order_variables, premise_counterexample_bdd_with, satisfiable_bdd_with,
 };
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
@@ -174,7 +173,7 @@ impl Policy {
 
     /// 逐条验证断言；任何一条失败都返回 `holds=false` 的结果，不提前中止。
     pub fn verify(&self, engine: Engine) -> Result<Vec<AssertionResult>, PolicyError> {
-        self.verify_with_bdd_order(engine, None)
+        self.verify_with_bdd_config(engine, None, BddLimits::default())
     }
 
     /// 同 [`Policy::verify`]，但可指定 BDD 的静态变量顺序（仅 `Engine::Bdd` 生效）。
@@ -182,6 +181,16 @@ impl Policy {
         &self,
         engine: Engine,
         bdd_order: Option<VarOrder>,
+    ) -> Result<Vec<AssertionResult>, PolicyError> {
+        self.verify_with_bdd_config(engine, bdd_order, BddLimits::default())
+    }
+
+    /// 同 [`Policy::verify`]，可同时指定变量顺序与节点预算。
+    pub fn verify_with_bdd_config(
+        &self,
+        engine: Engine,
+        bdd_order: Option<VarOrder>,
+        bdd_limits: BddLimits,
     ) -> Result<Vec<AssertionResult>, PolicyError> {
         if self.assertions.is_empty() {
             return Err(PolicyError::NoAssertions);
@@ -209,14 +218,13 @@ impl Policy {
             Engine::Sat => satisfiable(&premise, alg, &binary)
                 .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?,
             Engine::Bdd => {
-                let result = match bdd_order {
-                    None => satisfiable_bdd(&premise, alg, &binary),
-                    Some(order) => {
-                        let vars = order_variables(&premise, &premise, order);
-                        satisfiable_bdd_with_order(&premise, alg, &binary, &vars)
-                    }
+                let vars = bdd_order.map(|order| order_variables(&premise, &premise, order));
+                let request = BddRequest {
+                    order: vars.as_deref(),
+                    limits: bdd_limits,
                 };
-                result.map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?
+                satisfiable_bdd_with(&premise, alg, &binary, &request)
+                    .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?
             }
         };
         if satisfiable_premise.is_none() {
@@ -240,16 +248,14 @@ impl Policy {
                     });
                 }
                 Engine::Bdd => {
-                    let check = match bdd_order {
-                        None => premise_counterexample_bdd(&premise, &expr, alg, &binary),
-                        Some(order) => {
-                            let vars = order_variables(&premise, &expr, order);
-                            premise_counterexample_bdd_with_order(
-                                &premise, &expr, alg, &binary, &vars,
-                            )
-                        }
-                    }
-                    .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
+                    let vars = bdd_order.map(|order| order_variables(&premise, &expr, order));
+                    let request = BddRequest {
+                        order: vars.as_deref(),
+                        limits: bdd_limits,
+                    };
+                    let check =
+                        premise_counterexample_bdd_with(&premise, &expr, alg, &binary, &request)
+                            .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
                         holds: check.counterexample.is_none(),

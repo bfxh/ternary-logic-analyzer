@@ -437,3 +437,17 @@ fn netlist_converts_text_to_json() {
     assert!(stdout.contains("\"inputs\""), "{stdout}");
     assert!(stdout.contains("\"And\""), "{stdout}");
 }
+
+#[test]
+fn bdd_max_nodes_is_enforced() {
+    let (stdout, stderr, code) = run(&[
+        "equiv",
+        "(a & b) | (c & d)",
+        "(a & b) | (d & c)",
+        "--bdd",
+        "--bdd-max-nodes",
+        "1",
+    ]);
+    assert_ne!(code, 0, "stdout={stdout}");
+    assert!(stderr.contains("BDD 节点数超过上限"), "stderr={stderr}");
+}

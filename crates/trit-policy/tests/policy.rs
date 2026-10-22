@@ -1,5 +1,5 @@
 use trit_core::value::Ternary;
-use trit_policy::{Engine, Policy, PolicyError, VarOrder};
+use trit_policy::{BddLimits, Engine, Policy, PolicyError, VarOrder};
 
 const ADMISSION: &str = r#"{
   "algebra": "kleene",
@@ -206,4 +206,13 @@ fn bdd_order_does_not_change_admission_results() {
             assert_eq!(left.holds, right.holds, "{}: {}", order.as_str(), left.name);
         }
     }
+}
+
+#[test]
+fn bdd_budget_is_enforced_in_verify() {
+    let policy = Policy::from_json(ADMISSION).expect("策略应可解析");
+    let err = policy
+        .verify_with_bdd_config(Engine::Bdd, None, BddLimits { max_nodes: 1 })
+        .expect_err("1 个节点装不下");
+    assert!(matches!(err, PolicyError::Bdd(_)), "{err}");
 }

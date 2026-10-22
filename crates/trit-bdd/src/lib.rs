@@ -67,6 +67,15 @@ impl BddLimits {
     };
 }
 
+/// 一次 BDD 计算的配置：变量顺序（`None` = 首次出现）与节点预算。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BddRequest<'a> {
+    /// 变量顺序；`None` 使用首次出现顺序。
+    pub order: Option<&'a [String]>,
+    /// 节点预算。
+    pub limits: BddLimits,
+}
+
 /// BDD 判定结果，附带差集 BDD 的节点数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BddVerdict {
@@ -431,6 +440,23 @@ pub fn equivalent_bdd(
     verdict_with_vars(a, b, alg, binary_vars, &vars, BddLimits::default())
 }
 
+/// 用 [`BddRequest`] 指定顺序与预算。
+pub fn equivalent_bdd_with(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    request: &BddRequest<'_>,
+) -> Result<BddVerdict, BddError> {
+    check_pair(a, b)?;
+    let all = union_vars(a, b);
+    let vars = match request.order {
+        Some(order) => merge_order(&all, order),
+        None => all,
+    };
+    verdict_with_vars(a, b, alg, binary_vars, &vars, request.limits)
+}
+
 /// 同 [`equivalent_bdd`]，但可指定 BDD 节点预算。
 pub fn equivalent_bdd_with_limits(
     a: &Expr,
@@ -475,8 +501,18 @@ pub fn equivalent_bdd_best(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<(BddVerdict, VarOrder), BddError> {
+    equivalent_bdd_best_with_limits(a, b, alg, binary_vars, BddLimits::default())
+}
+
+/// 同 [`equivalent_bdd_best`]，但可指定 BDD 节点预算。
+pub fn equivalent_bdd_best_with_limits(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    limits: BddLimits,
+) -> Result<(BddVerdict, VarOrder), BddError> {
     check_pair(a, b)?;
-    let limits = BddLimits::default();
     let mut best: Option<(BddVerdict, VarOrder)> = None;
     for order in [
         VarOrder::Appearance,
@@ -551,7 +587,7 @@ pub fn satisfiable_bdd(
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, BddError> {
     let vars = expr.variables();
-    satisfiable_with_vars(expr, alg, binary_vars, &vars)
+    satisfiable_with_vars(expr, alg, binary_vars, &vars, BddLimits::default())
 }
 
 /// 指定变量顺序的可满足性判定；缺失变量按首次出现顺序补齐。
@@ -563,7 +599,22 @@ pub fn satisfiable_bdd_with_order(
 ) -> Result<Option<Assignment>, BddError> {
     let all = expr.variables();
     let vars = merge_order(&all, order);
-    satisfiable_with_vars(expr, alg, binary_vars, &vars)
+    satisfiable_with_vars(expr, alg, binary_vars, &vars, BddLimits::default())
+}
+
+/// 用 [`BddRequest`] 指定顺序与预算。
+pub fn satisfiable_bdd_with(
+    expr: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    request: &BddRequest<'_>,
+) -> Result<Option<Assignment>, BddError> {
+    let all = expr.variables();
+    let vars = match request.order {
+        Some(order) => merge_order(&all, order),
+        None => all,
+    };
+    satisfiable_with_vars(expr, alg, binary_vars, &vars, request.limits)
 }
 
 fn satisfiable_with_vars(
@@ -571,9 +622,10 @@ fn satisfiable_with_vars(
     alg: Algebra,
     binary_vars: &HashSet<String>,
     vars: &[String],
+    limits: BddLimits,
 ) -> Result<Option<Assignment>, BddError> {
     check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
-    let enc = Encoder::new(alg, vars, binary_vars, BddLimits::default())?;
+    let enc = Encoder::new(alg, vars, binary_vars, limits)?;
     let node = enc.encode(expr)?;
     // 必须限定在合法三值域内：非法导轨 (1,1) 可能被 table 解释成 False，再被 Not 变成 True。
     let sat = enc.guard(enc.valid()?.and(&node.t).and(&node.x.not()))?;
@@ -608,7 +660,14 @@ pub fn premise_counterexample_bdd(
     binary_vars: &HashSet<String>,
 ) -> Result<PremiseCheck, BddError> {
     let vars = union_vars(premise, assertion);
-    premise_with_vars(premise, assertion, alg, binary_vars, &vars)
+    premise_with_vars(
+        premise,
+        assertion,
+        alg,
+        binary_vars,
+        &vars,
+        BddLimits::default(),
+    )
 }
 
 /// 指定变量顺序的前提过滤查询；缺失变量按首次出现顺序补齐。
@@ -621,7 +680,30 @@ pub fn premise_counterexample_bdd_with_order(
 ) -> Result<PremiseCheck, BddError> {
     let all = union_vars(premise, assertion);
     let vars = merge_order(&all, order);
-    premise_with_vars(premise, assertion, alg, binary_vars, &vars)
+    premise_with_vars(
+        premise,
+        assertion,
+        alg,
+        binary_vars,
+        &vars,
+        BddLimits::default(),
+    )
+}
+
+/// 用 [`BddRequest`] 指定顺序与预算。
+pub fn premise_counterexample_bdd_with(
+    premise: &Expr,
+    assertion: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    request: &BddRequest<'_>,
+) -> Result<PremiseCheck, BddError> {
+    let all = union_vars(premise, assertion);
+    let vars = match request.order {
+        Some(order) => merge_order(&all, order),
+        None => all,
+    };
+    premise_with_vars(premise, assertion, alg, binary_vars, &vars, request.limits)
 }
 
 fn premise_with_vars(
@@ -630,11 +712,12 @@ fn premise_with_vars(
     alg: Algebra,
     binary_vars: &HashSet<String>,
     vars: &[String],
+    limits: BddLimits,
 ) -> Result<PremiseCheck, BddError> {
     for expr in [premise, assertion] {
         check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     }
-    let enc = Encoder::new(alg, vars, binary_vars, BddLimits::default())?;
+    let enc = Encoder::new(alg, vars, binary_vars, limits)?;
     let p = enc.encode(premise)?;
     let a = enc.encode(assertion)?;
     let bad = enc.guard(enc.valid()?.and(&p.t).and(&p.x.not()).and(&a.t.not()))?;
@@ -755,7 +838,15 @@ pub fn quantify_bdd(
     binary_vars: &HashSet<String>,
 ) -> Result<Quantified, BddError> {
     let vars = expr.variables();
-    quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars)
+    quantify_with_vars(
+        expr,
+        quantified,
+        kind,
+        alg,
+        binary_vars,
+        &vars,
+        BddLimits::default(),
+    )
 }
 
 /// 指定变量顺序量化；顺序里缺失的变量按首次出现顺序补在末尾。
@@ -779,7 +870,40 @@ pub fn quantify_bdd_with_order(
             vars.push(name);
         }
     }
-    quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars)
+    quantify_with_vars(
+        expr,
+        quantified,
+        kind,
+        alg,
+        binary_vars,
+        &vars,
+        BddLimits::default(),
+    )
+}
+
+/// 用 [`BddRequest`] 指定顺序与预算。
+pub fn quantify_bdd_with(
+    expr: &Expr,
+    quantified: &[String],
+    kind: Quantifier,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    request: &BddRequest<'_>,
+) -> Result<Quantified, BddError> {
+    let all = expr.variables();
+    let vars = match request.order {
+        Some(order) => merge_order(&all, order),
+        None => all,
+    };
+    quantify_with_vars(
+        expr,
+        quantified,
+        kind,
+        alg,
+        binary_vars,
+        &vars,
+        request.limits,
+    )
 }
 
 /// 试四种静态排序，取量化 BDD 节点数最少者；平局保留先出现者。
@@ -790,6 +914,25 @@ pub fn quantify_bdd_best(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<(Quantified, VarOrder), BddError> {
+    quantify_bdd_best_with_limits(
+        expr,
+        quantified,
+        kind,
+        alg,
+        binary_vars,
+        BddLimits::default(),
+    )
+}
+
+/// 同 [`quantify_bdd_best`]，但可指定 BDD 节点预算。
+pub fn quantify_bdd_best_with_limits(
+    expr: &Expr,
+    quantified: &[String],
+    kind: Quantifier,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    limits: BddLimits,
+) -> Result<(Quantified, VarOrder), BddError> {
     let mut best: Option<(Quantified, VarOrder)> = None;
     for order in [
         VarOrder::Appearance,
@@ -798,7 +941,8 @@ pub fn quantify_bdd_best(
         VarOrder::FrequencyAsc,
     ] {
         let vars = order_variables(expr, expr, order);
-        let quantified = quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars)?;
+        let quantified =
+            quantify_with_vars(expr, quantified, kind, alg, binary_vars, &vars, limits)?;
         if best
             .as_ref()
             .is_none_or(|(current, _)| quantified.nodes() < current.nodes())
@@ -816,6 +960,7 @@ fn quantify_with_vars(
     alg: Algebra,
     binary_vars: &HashSet<String>,
     vars: &[String],
+    limits: BddLimits,
 ) -> Result<Quantified, BddError> {
     check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     for name in quantified {
@@ -828,7 +973,7 @@ fn quantify_with_vars(
         .filter(|v| !quantified.iter().any(|q| q == *v))
         .cloned()
         .collect();
-    let enc = Encoder::new(alg, vars, binary_vars, BddLimits::default())?;
+    let enc = Encoder::new(alg, vars, binary_vars, limits)?;
     let node = enc.encode(expr)?;
     let pred = node.t.and(&node.x.not());
 
