@@ -126,6 +126,16 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 删掉后若仍可相等就必须保留。得到的是**充分**部分反例——未列出的变量在各自域内任取，两边仍不相等；
 不会退化成“只保证存在某个补全”的空反例。
 
+## 设计检查（`trit check`）
+
+一条命令跑：结构校验 → 时序（关键路径/违例）→ X 传播统计 → ATPG 覆盖率；
+`--min-coverage` 与 `--clock` 是失败条件，任一不满足退出码 1。
+
+```bash
+trit check design.v --from verilog --clock 10 --min-coverage 0.9
+trit check design.net --clock 4 --library cells.json --format json
+```
+
 ## 时序估算（`trit timing`）
 
 组合、单位延迟的 STA-lite：输入到达 0，每个非常量门加 `--delay`（默认 1），

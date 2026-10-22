@@ -43,8 +43,8 @@ fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "timing", "netlist",
-        "belnap", "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "timing", "check",
+        "netlist", "belnap", "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }
@@ -547,4 +547,31 @@ fn timing_lists_critical_paths() {
     assert!(stdout.contains("#1 delay=2"), "{stdout}");
     assert!(stdout.contains("#2 delay=2"), "{stdout}");
     assert!(stdout.contains(" -> y"), "{stdout}");
+}
+
+#[test]
+fn check_fails_on_timing_violation() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chain3.net");
+    let (stdout, _, code) = run(&["check", path.to_str().unwrap(), "--clock", "1"]);
+    assert_eq!(code, 1, "{stdout}");
+    assert!(stdout.contains("FAIL"), "{stdout}");
+    assert!(stdout.contains("时序违例 1"), "{stdout}");
+}
+
+#[test]
+fn check_passes_with_slack_and_coverage() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chain3.net");
+    let (stdout, stderr, code) = run(&[
+        "check",
+        path.to_str().unwrap(),
+        "--clock",
+        "10",
+        "--min-coverage",
+        "0.5",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("PASS"), "{stdout}");
+    assert!(stdout.contains("ATPG：覆盖率 100.0%"), "{stdout}");
 }

@@ -203,6 +203,29 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 设计检查：结构 + 时序 + X 传播 + ATPG 覆盖率（一条命令）。
+    Check {
+        /// 网表文件路径。
+        path: std::path::PathBuf,
+        /// 输入格式：`text`（默认）/ `json` / `verilog`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        from: String,
+        /// 时钟周期；省略时取关键路径。
+        #[arg(long, value_name = "CYCLES")]
+        clock: Option<u32>,
+        /// 门延迟（单位周期）；被 --library 覆盖。
+        #[arg(long, default_value_t = 1)]
+        delay: u32,
+        /// 时序库 JSON。
+        #[arg(long, value_name = "FILE")]
+        library: Option<std::path::PathBuf>,
+        /// ATPG 覆盖率下限（0..=1）。
+        #[arg(long, default_value_t = 0.0)]
+        min_coverage: f64,
+        /// 输出格式。
+        #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
+        format: Format,
+    },
     /// 网表格式转换：text <-> json。
     Netlist {
         /// 输入文件。
@@ -355,6 +378,24 @@ fn main() -> Result<()> {
             library.as_deref(),
             paths,
             format,
+        ),
+        Commands::Check {
+            path,
+            from,
+            clock,
+            delay,
+            library,
+            min_coverage,
+            format,
+        } => cmd_check(
+            &path,
+            &from,
+            clock,
+            delay,
+            library.as_deref(),
+            min_coverage,
+            format,
+            &cli.algebra,
         ),
         Commands::Netlist { path, from, to } => cmd_netlist(&path, &from, &to),
         Commands::Verify {
@@ -1221,6 +1262,126 @@ fn cmd_circuit(
     Ok(())
 }
 
+/// `check` 子命令：结构 + 时序 + X 传播 + ATPG。
+#[allow(clippy::too_many_arguments)]
+fn cmd_check(
+    path: &std::path::Path,
+    from: &str,
+    clock: Option<u32>,
+    delay: u32,
+    library: Option<&std::path::Path>,
+    min_coverage: f64,
+    format: Format,
+    alg_name: &str,
+) -> Result<()> {
+    let alg = resolve_algebra(alg_name)?;
+    let circuit = load_circuit(path, from)?;
+    let model = timing_model(library, delay)?;
+    let timing = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
+    let atpg = (circuit.input_count() <= 10)
+        .then(|| trit_circuit::generate_tests(&circuit, alg))
+        .transpose()?;
+    let analysis = (circuit.input_count() <= 10)
+        .then(|| trit_circuit::analyze(&circuit, alg))
+        .transpose()?;
+
+    let mut failures: Vec<String> = Vec::new();
+    if timing.violations > 0 {
+        failures.push(format!("时序违例 {} 个", timing.violations));
+    }
+    if let Some(report) = &atpg
+        && report.coverage < min_coverage
+    {
+        failures.push(format!(
+            "覆盖率 {:.1}% 低于下限 {:.1}%",
+            report.coverage * 100.0,
+            min_coverage * 100.0
+        ));
+    }
+    let pass = failures.is_empty();
+
+    match format {
+        Format::Json => {
+            let obj = serde_json::json!({
+                "circuit": circuit.name,
+                "inputs": circuit.input_count(),
+                "outputs": circuit.outputs.len(),
+                "gates": circuit.gates.len(),
+                "timing": {
+                    "critical_path": timing.critical_path,
+                    "clock": timing.clock,
+                    "violations": timing.violations,
+                },
+                "x": analysis.as_ref().map(|report| serde_json::json!({
+                    "unknown_output_combinations": report.unknown_output_combinations,
+                })),
+                "atpg": atpg.as_ref().map(|report| serde_json::json!({
+                    "coverage": report.coverage,
+                    "testable": report.testable,
+                    "total": report.faults.len(),
+                    "patterns": report.patterns.len(),
+                    "untestable": report.untestable.len(),
+                })),
+                "pass": pass,
+                "failures": failures,
+            });
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        }
+        _ => {
+            println!(
+                "设计检查 {}：{} 输入 / {} 输出 / {} 门",
+                circuit.name,
+                circuit.input_count(),
+                circuit.outputs.len(),
+                circuit.gates.len()
+            );
+            println!(
+                "  时序：关键路径 {}，时钟 {}，违例 {}",
+                timing.critical_path, timing.clock, timing.violations
+            );
+            if let Some(report) = &analysis {
+                println!("  X：未知输出组合 {}", report.unknown_output_combinations);
+            }
+            if let Some(report) = &atpg {
+                println!(
+                    "  ATPG：覆盖率 {:.1}%（{}/{}），向量 {}，不可测 {}",
+                    report.coverage * 100.0,
+                    report.testable,
+                    report.faults.len(),
+                    report.patterns.len(),
+                    report.untestable.len()
+                );
+            }
+            println!("结果：{}", if pass { "PASS" } else { "FAIL" });
+            for failure in &failures {
+                println!("  - {failure}");
+            }
+        }
+    }
+    if !pass {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn timing_model(
+    library: Option<&std::path::Path>,
+    delay: u32,
+) -> Result<trit_circuit::timing::TimingModel> {
+    match library {
+        Some(library) => {
+            let text = std::fs::read_to_string(library)
+                .with_context(|| format!("无法读取时序库 {}", library.display()))?;
+            trit_circuit::timing::TimingModel::from_json(&text)
+                .with_context(|| format!("时序库解析失败：{}", library.display()))
+        }
+        None => Ok(trit_circuit::timing::TimingModel {
+            default_delay: delay,
+            ..Default::default()
+        }),
+    }
+}
+
 /// `timing` 子命令：组合时序估算。
 fn cmd_timing(
     path: &std::path::Path,
@@ -1232,18 +1393,7 @@ fn cmd_timing(
     format: Format,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
-    let model = match library {
-        Some(library) => {
-            let text = std::fs::read_to_string(library)
-                .with_context(|| format!("无法读取时序库 {}", library.display()))?;
-            trit_circuit::timing::TimingModel::from_json(&text)
-                .with_context(|| format!("时序库解析失败：{}", library.display()))?
-        }
-        None => trit_circuit::timing::TimingModel {
-            default_delay: delay,
-            ..Default::default()
-        },
-    };
+    let model = timing_model(library, delay)?;
     let report = trit_circuit::timing::analyze_timing(&circuit, model.clone(), clock)?;
     let paths = trit_circuit::timing::critical_paths(&circuit, model, paths)?;
     match format {
