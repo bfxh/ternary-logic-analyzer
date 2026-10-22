@@ -4,6 +4,7 @@ pub mod algebra;
 pub mod ast;
 pub mod bits;
 pub mod bulk;
+pub mod limits;
 pub mod parser;
 pub mod value;
 
@@ -11,5 +12,6 @@ pub use algebra::Algebra;
 pub use ast::Expr;
 pub use bits::{BitPlane, TriBit, TruthTable};
 pub use bulk::TriVec;
+pub use limits::{LimitError, Limits, check_expr, check_vars};
 pub use parser::Parser;
 pub use value::Ternary;

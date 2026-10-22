@@ -16,6 +16,7 @@ use varisat::{ExtendFormula, Lit, Solver, Var};
 
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
+use trit_core::limits::{Limits, check_expr};
 use trit_core::value::Ternary;
 use trit_eval::{Assignment, EquivalenceResult, assignment_index};
 
@@ -25,6 +26,9 @@ pub enum SymbolicError {
     /// SAT 求解器报错。
     #[error("SAT 求解失败: {0}")]
     Solver(String),
+    /// 表达式超出资源预算。
+    #[error("表达式超出预算: {0}")]
+    Limit(String),
 }
 
 /// 编码规模（变量数 / 子句数），用于验证二值快速路径的收益。
@@ -436,6 +440,9 @@ pub fn equivalent_symbolic_with(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<EquivalenceResult, SymbolicError> {
+    for expr in [a, b] {
+        check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+    }
     let (mut enc, vars) = build(a, b, alg, binary_vars);
     let sat = enc
         .solver
@@ -499,6 +506,9 @@ pub fn minimal_counterexample(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, SymbolicError> {
+    for expr in [a, b] {
+        check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+    }
     let (mut enc, vars) = build(a, b, alg, binary_vars);
     let sat = enc
         .solver
@@ -599,6 +609,7 @@ pub fn satisfiable(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, SymbolicError> {
+    check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
     let vars = expr.variables();
     let mut enc = Encoder::new(alg, binary_vars);
     let node = enc.encode(expr);
@@ -645,6 +656,9 @@ pub fn premise_counterexample(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, SymbolicError> {
+    for expr in [premise, assertion] {
+        check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+    }
     let mut vars = premise.variables();
     for v in assertion.variables() {
         if !vars.contains(&v) {

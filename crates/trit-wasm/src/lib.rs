@@ -7,9 +7,10 @@ use serde_json::{Map, Value, json};
 use wasm_bindgen::prelude::*;
 
 use trit_core::algebra::Algebra;
+use trit_core::limits::{Limits, check_expr};
 use trit_core::parser::Parser;
 use trit_eval::eval::{
-    Assignment, decode_assignment, equivalent as equivalent_expr, eval as eval_expr, truth_table,
+    Assignment, decode_assignment, equivalent_within, eval_within, truth_table_within,
 };
 
 fn js_err(message: impl Into<String>) -> JsValue {
@@ -102,7 +103,9 @@ pub fn eval_expr_js(expr: &str, assign: &str, algebra: &str) -> Result<String, J
     let parsed = Parser::parse(expr).map_err(|e| js_err(format!("解析失败：{e}")))?;
     let assignment = parse_assignment(assign)?;
     let alg = parse_algebra(algebra)?;
-    Ok(eval_expr(&parsed, &assignment, alg).as_char().to_string())
+    let value = eval_within(&parsed, &assignment, alg, Limits::default())
+        .map_err(|e| js_err(format!("{e}")))?;
+    Ok(value.as_char().to_string())
 }
 
 /// 三值真值表，返回 `{ variables: [...], rows: [{ assignment, value }] }`。
@@ -110,10 +113,15 @@ pub fn eval_expr_js(expr: &str, assign: &str, algebra: &str) -> Result<String, J
 pub fn truth_table_js(expr: &str, algebra: &str) -> Result<String, JsValue> {
     let parsed = Parser::parse(expr).map_err(|e| js_err(format!("解析失败：{e}")))?;
     let alg = parse_algebra(algebra)?;
-    if parsed.variables().len() > 10 {
-        return Err(js_err("真值表最多 10 个变量"));
-    }
-    let table = truth_table(&parsed, alg);
+    let table = truth_table_within(
+        &parsed,
+        alg,
+        Limits {
+            max_vars: 10,
+            ..Limits::default()
+        },
+    )
+    .map_err(|e| js_err(format!("{e}")))?;
     let vars = table.variables.clone();
     let rows: Vec<Value> = table
         .values
@@ -136,7 +144,8 @@ pub fn equivalent_js(left: &str, right: &str, algebra: &str) -> Result<String, J
     let l = Parser::parse(left).map_err(|e| js_err(format!("左式解析失败：{e}")))?;
     let r = Parser::parse(right).map_err(|e| js_err(format!("右式解析失败：{e}")))?;
     let alg = parse_algebra(algebra)?;
-    let verdict = equivalent_expr(&l, &r, alg);
+    let verdict =
+        equivalent_within(&l, &r, alg, Limits::default()).map_err(|e| js_err(format!("{e}")))?;
     let counterexample = verdict
         .counterexample_assignment
         .as_ref()
@@ -156,6 +165,7 @@ pub fn equivalent_js(left: &str, right: &str, algebra: &str) -> Result<String, J
 #[wasm_bindgen(js_name = belnapEval)]
 pub fn belnap_eval_js(expr: &str, assign: &str) -> Result<String, JsValue> {
     let parsed = Parser::parse(expr).map_err(|e| js_err(format!("解析失败：{e}")))?;
+    check_expr(&parsed, Limits::default()).map_err(|e| js_err(format!("{e}")))?;
     let assignment = parse_b4_assignment(assign)?;
     Ok(trit_belnap::eval(&parsed, &assignment)
         .as_char()
@@ -166,6 +176,7 @@ pub fn belnap_eval_js(expr: &str, assign: &str) -> Result<String, JsValue> {
 #[wasm_bindgen(js_name = belnapTable)]
 pub fn belnap_table_js(expr: &str) -> Result<String, JsValue> {
     let parsed = Parser::parse(expr).map_err(|e| js_err(format!("解析失败：{e}")))?;
+    check_expr(&parsed, Limits::default()).map_err(|e| js_err(format!("{e}")))?;
     let vars = parsed.variables();
     if vars.len() > 6 {
         return Err(js_err("四值真值表最多 6 个变量"));

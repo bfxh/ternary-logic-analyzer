@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::bits::{Evaluator, TriBit, TruthTable};
+use trit_core::limits::{LimitError, Limits, check_expr, check_vars};
 use trit_core::value::Ternary;
 
 /// 变量赋值：一组 `变量名 → 取值`。
@@ -223,6 +224,51 @@ pub fn decode_assignment(index: u64, vars: &[String]) -> Assignment {
         asg.set(name.clone(), v);
     }
     asg
+}
+
+/// 带预算的单点求值。
+pub fn eval_within(
+    expr: &Expr,
+    assignment: &Assignment,
+    alg: Algebra,
+    limits: Limits,
+) -> Result<Ternary, LimitError> {
+    check_expr(expr, limits)?;
+    Ok(eval(expr, assignment, alg))
+}
+
+/// 带预算的真值表（限制 AST 深度/节点数与变量数）。
+pub fn truth_table_within(
+    expr: &Expr,
+    alg: Algebra,
+    limits: Limits,
+) -> Result<TruthTable, LimitError> {
+    check_expr(expr, limits)?;
+    check_vars(expr, limits)?;
+    Ok(truth_table(expr, alg))
+}
+
+/// 带预算的穷举等价。
+pub fn equivalent_within(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    limits: Limits,
+) -> Result<EquivalenceResult, LimitError> {
+    check_expr(a, limits)?;
+    check_expr(b, limits)?;
+    let mut vars = a.variables();
+    for v in b.variables() {
+        if !vars.contains(&v) {
+            vars.push(v);
+        }
+    }
+    if vars.len() > limits.max_vars {
+        return Err(LimitError::Vars {
+            limit: limits.max_vars,
+        });
+    }
+    Ok(equivalent(a, b, alg))
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ use biodivine_lib_bdd::{Bdd, BddVariable, BddVariableSet};
 
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
+use trit_core::limits::{Limits, check_expr};
 use trit_core::value::Ternary;
 use trit_eval::{Assignment, EquivalenceResult, assignment_index};
 
@@ -33,6 +34,9 @@ pub enum BddError {
     /// 被量化的变量不在表达式里。
     #[error("表达式里没有变量 {0}")]
     UnknownVariable(String),
+    /// 表达式超出资源预算。
+    #[error("表达式超出预算: {0}")]
+    Limit(String),
 }
 
 /// BDD 判定结果，附带差集 BDD 的节点数。
@@ -260,6 +264,9 @@ pub fn equivalent_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<BddVerdict, BddError> {
+    for expr in [a, b] {
+        check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+    }
     let mut vars = a.variables();
     for v in b.variables() {
         if !vars.contains(&v) {
@@ -305,6 +312,7 @@ pub fn satisfiable_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, BddError> {
+    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     let vars = expr.variables();
     let enc = Encoder::new(alg, &vars, binary_vars)?;
     let node = enc.encode(expr);
@@ -340,6 +348,9 @@ pub fn premise_counterexample_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<PremiseCheck, BddError> {
+    for expr in [premise, assertion] {
+        check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+    }
     let mut vars = premise.variables();
     for v in assertion.variables() {
         if !vars.contains(&v) {
@@ -470,6 +481,7 @@ pub fn quantify_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Quantified, BddError> {
+    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     let all = expr.variables();
     for name in quantified {
         if !all.iter().any(|v| v == name) {

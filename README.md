@@ -90,6 +90,18 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 | `TriVec -> bool[]`（纯二值） | 0.97 ms | 1.08 G elem/s |
 | `from_binary` 二进制视图 | 0.002 ms | 仅 move，无复制 |
 
+## 资源预算与变异门
+
+所有入口共用 `trit_core::Limits`（默认：深度 256 / 节点 100 000 / 枚举 12 变量）：
+
+- `check_expr` 迭代遍历 AST，`check_vars` 管 `3^n` 枚举；
+- `truth_table_within` / `eval_within` / `equivalent_within`：`trit-eval` 的带预算版本；
+- SAT / BDD / 策略入口先 `check_expr` 再编码，超限返回专门的 `Limit` 错误；
+- CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
+
+`python scripts/mutation_check.py` 对 12 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 12/12）；`.github/workflows/mutation.yml` 每周跑一次。
+
 ## 符号化等价（SAT）
 
 每个 trit 用两根布尔导轨，按所选代数的真值表逐门加子句，K3/Ł3/B3 共用编码。

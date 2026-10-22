@@ -258,6 +258,9 @@ mod tests {
         assert_eq!(Algebra::Kleene.strong_add(Unknown, Unknown), Unknown);
         assert_eq!(Algebra::Lukasiewicz.strong_add(Unknown, Unknown), True);
         assert_eq!(Algebra::Bochvar.strong_add(Unknown, Unknown), Unknown);
+        assert_eq!(Algebra::Kleene.strong_add(True, False), False);
+        assert_eq!(Algebra::Kleene.strong_add(False, True), False);
+        assert_eq!(Algebra::Bochvar.strong_add(True, False), False);
         assert_eq!(Algebra::Lukasiewicz.strong_add(False, True), True);
         assert_eq!(Algebra::Lukasiewicz.strong_add(False, False), False);
         assert_eq!(Algebra::Kleene.strong_add(True, True), True);
@@ -272,6 +275,8 @@ mod tests {
         assert_eq!(Algebra::Lukasiewicz.strong_and(True, True), True);
         assert_eq!(Algebra::Lukasiewicz.strong_and(False, True), False);
         assert_eq!(Algebra::Kleene.strong_and(Unknown, True), Unknown);
+        assert_eq!(Algebra::Kleene.strong_and(True, False), False);
+        assert_eq!(Algebra::Bochvar.strong_and(True, False), False);
         assert_eq!(Algebra::Bochvar.strong_and(Unknown, True), Unknown);
     }
 

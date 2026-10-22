@@ -27,6 +27,7 @@ use serde::Deserialize;
 use trit_bdd::{BddError, premise_counterexample_bdd, satisfiable_bdd};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
+use trit_core::limits::{Limits, check_expr};
 use trit_core::parser::Parser;
 use trit_core::value::Ternary;
 use trit_eval::Assignment;
@@ -142,6 +143,9 @@ pub enum PolicyError {
     /// BDD 引擎错误。
     #[error("BDD 错误: {0}")]
     Bdd(String),
+    /// 表达式超出资源预算。
+    #[error("表达式超出预算: {0}")]
+    Limit(String),
 }
 
 impl From<serde_json::Error> for PolicyError {
@@ -182,6 +186,11 @@ impl Policy {
             assumptions.push(expand(&raw, &definitions, &mut Vec::new())?);
         }
         let premise = assumptions.into_iter().fold(truth.clone(), Expr::and);
+        let limits = Limits {
+            max_vars: usize::MAX,
+            ..Limits::default()
+        };
+        check_expr(&premise, limits).map_err(|e| PolicyError::Limit(e.to_string()))?;
         let satisfiable_premise = match engine {
             Engine::Sat => satisfiable(&premise, alg, &binary)
                 .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?,
@@ -196,6 +205,7 @@ impl Policy {
         for assertion in &self.assertions {
             let raw = parse_expr(&assertion.name, &assertion.expr)?;
             let expr = expand(&raw, &definitions, &mut Vec::new())?;
+            check_expr(&expr, limits).map_err(|e| PolicyError::Limit(e.to_string()))?;
             match engine {
                 Engine::Sat => {
                     let witness = premise_counterexample(&premise, &expr, alg, &binary)

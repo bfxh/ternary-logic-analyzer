@@ -22,9 +22,10 @@ use trit_bdd::{Quantifier, equivalent_bdd, quantify_bdd};
 use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
+use trit_core::limits::Limits;
 use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
-use trit_eval::eval::{Assignment, equivalent, eval, truth_table};
+use trit_eval::eval::{Assignment, equivalent, equivalent_within, eval, truth_table_within};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
 use trit_policy::{Engine, Policy};
 use trit_sat::symbolic::{
@@ -316,13 +317,12 @@ fn cmd_eval(expression: &str, assign: &str, alg_name: &str) -> Result<()> {
 fn cmd_table(expression: &str, format: Format, alg_name: &str) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let expr = parse_expr(expression)?;
-    if expr.variables().len() > 10 {
-        bail!(
-            "真值表最多 10 个变量（3^11 = 177147 行），当前 {}",
-            expr.variables().len()
-        );
-    }
-    let tt = truth_table(&expr, alg);
+    let limits = Limits {
+        max_vars: 10,
+        ..Limits::default()
+    };
+    let tt = truth_table_within(&expr, alg, limits)
+        .with_context(|| "真值表超出预算（最多 10 个变量，3^11 = 177147 行）")?;
     print!(
         "{}",
         format.render_truth_table(&tt, &format!("f = {expression}  [{alg}]"))
@@ -798,7 +798,10 @@ fn cmd_simplify(
         ..SimplifyOptions::default()
     };
     let simplified = simplify_with(&expr, alg, opts);
-    if !equivalent(&expr, &simplified, alg).equivalent {
+    if !equivalent_within(&expr, &simplified, alg, Limits::default())
+        .map_err(|e| anyhow::anyhow!("化简复核超出预算：{e}"))?
+        .equivalent
+    {
         bail!(
             "化简结果语义不等价（内部错误）：{} -> {}",
             expr.to_infix(),
@@ -1231,12 +1234,19 @@ fn cmd_repl(alg_name: &str) -> Result<()> {
                 }
                 match ExprParser::parse(input) {
                     Ok(expr) => {
-                        if expr.variables().len() > 10 {
-                            println!("真值表最多 10 个变量，当前 {}", expr.variables().len());
-                            continue;
+                        match truth_table_within(
+                            &expr,
+                            alg,
+                            Limits {
+                                max_vars: 10,
+                                ..Limits::default()
+                            },
+                        ) {
+                            Ok(tt) => {
+                                print!("{}", Format::Table.render_truth_table(&tt, input))
+                            }
+                            Err(e) => println!("{e}"),
                         }
-                        let tt = truth_table(&expr, alg);
-                        print!("{}", Format::Table.render_truth_table(&tt, input));
                     }
                     Err(e) => println!("解析错误：{e}"),
                 }

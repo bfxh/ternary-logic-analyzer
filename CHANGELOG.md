@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0] - 2026-10-22
+
+### Added
+
+- `trit-core::Limits` + `check_expr` / `check_vars`：库级统一预算（深度 / 节点 / 枚举变量数）。
+- `trit-eval`：`eval_within` / `truth_table_within` / `equivalent_within`。
+- SAT、BDD、策略入口先做深度/节点检查，超限返回 `Limit` 错误；CLI 与 WASM 共用同一套预算。
+- `scripts/mutation_check.py`：12 条关键规则的变异门（12/12 被抓）；新增每周 CI。
+
+### Fixed
+
+- 变异门发现 `strong_and` / `strong_add` 的 K3 断言过弱（只测了 `X⊗X` 与 `1⊗1`），
+  补上 `1⊗0 = 0`、`0⊗1 = 0` 的固定用例。
+
 ## [0.5.0] - 2026-10-22
 
 ### Changed（破坏性）
