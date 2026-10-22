@@ -30,11 +30,20 @@ fn run(args: &[&str]) -> (String, String, i32) {
 }
 
 #[test]
+fn atpg_reports_full_coverage_for_and() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (stdout, stderr, code) = run(&["atpg", path.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("覆盖率 100.0%（4/4）"), "{stdout}");
+    assert!(stdout.contains("测试向量"), "{stdout}");
+}
+
+#[test]
 fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "belnap", "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "belnap", "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }

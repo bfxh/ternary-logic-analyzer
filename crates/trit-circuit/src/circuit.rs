@@ -181,6 +181,8 @@ pub struct Fault {
     pub stuck_at: Ternary,
     /// 是否能被任一主输出观测到。
     pub observable: bool,
+    /// 首个能区分故障与正常的**二进制**输入向量（bit i = 第 i 个主输入）；不可测时为 `None`。
+    pub witness: Option<u64>,
 }
 
 /// 故障分析结果：冗余引脚列表与逐极性故障列表。
@@ -234,6 +236,22 @@ impl Circuit {
     /// 全部输入组合数 `3^n`。
     pub fn combination_count(&self) -> u64 {
         3u64.saturating_pow(self.input_count() as u32)
+    }
+
+    /// 把二进制测试向量（bit i 对应第 i 个主输入）解码成赋值表。
+    pub fn decode_binary(&self, mask: u64) -> BTreeMap<String, Ternary> {
+        self.inputs
+            .iter()
+            .enumerate()
+            .map(|(i, sig)| {
+                let value = if (mask >> i) & 1 == 0 {
+                    Ternary::False
+                } else {
+                    Ternary::True
+                };
+                (sig.name().to_string(), value)
+            })
+            .collect()
     }
 }
 
@@ -304,6 +322,9 @@ pub enum CircuitError {
     /// 输入向量里出现了非主输入。
     #[error("输入向量包含非主输入信号 {0}")]
     UnknownInput(String),
+    /// 主输入过多，二进制向量空间不可枚举。
+    #[error("主输入 {0} 个，超过故障分析的 16 个上限")]
+    TooManyInputs(usize),
 }
 
 /// 对电路做一次完整分析。
@@ -608,15 +629,23 @@ fn is_acyclic(circuit: &Circuit) -> bool {
 /// 逐个**门引脚**做 stuck-at 故障注入，分别判定冗余与每个极性的可观测性。
 ///
 /// 故障模型是 gate-pin：只替换该门该输入引脚上的取值，不覆盖整条共享信号。
-/// 冗余引脚：固定为 0 与固定为 1 时本门输出在所有组合下都相同。
+/// 在**二进制**测试向量空间（`2^n`）上判定：
+/// - 冗余引脚：把该引脚固定为 0 或 1，本门输出在所有向量下都相同；
+/// - 可观测：存在一个二进制向量能让某个主输出与正常值不同（`witness` 记首个）。
+///
+/// X 输入不是物理测试向量，因此不计入可测性判定。
 fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, CircuitError> {
-    let total = circuit.combination_count();
+    let input_count = circuit.input_count();
+    if input_count > 16 {
+        return Err(CircuitError::TooManyInputs(input_count));
+    }
+    let total = 1u64 << input_count;
     let order = topological_order(circuit)?;
     let mut redundant: Vec<GateSignalPair> = Vec::new();
     let mut faults: Vec<Fault> = Vec::new();
 
     let base: Vec<BTreeMap<String, Ternary>> = (0..total)
-        .map(|combo| simulate_combo(circuit, combo, alg, &order))
+        .map(|mask| simulate_binary_with_fault(circuit, mask, alg, None, &order))
         .collect();
 
     for (gate_index, gate) in circuit.gates.iter().enumerate() {
@@ -625,12 +654,12 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
         }
         for (input_index, probe) in gate.inputs.iter().enumerate() {
             let mut gate_values: [Vec<Ternary>; 2] = [Vec::new(), Vec::new()];
-            let mut observable = [false, false];
+            let mut witness: [Option<u64>; 2] = [None, None];
             for (polarity, stuck) in [Ternary::False, Ternary::True].into_iter().enumerate() {
-                for combo in 0..total {
-                    let injected = simulate_with_fault(
+                for mask in 0..total {
+                    let injected = simulate_binary_with_fault(
                         circuit,
-                        combo,
+                        mask,
                         alg,
                         Some((gate_index, input_index, stuck)),
                         &order,
@@ -641,23 +670,16 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
                             .copied()
                             .unwrap_or(Ternary::Unknown),
                     );
-                    let base_outs: Vec<Ternary> = circuit
-                        .outputs
-                        .iter()
-                        .map(|o| {
-                            base[combo as usize]
-                                .get(o.name())
-                                .copied()
-                                .unwrap_or(Ternary::Unknown)
+                    if witness[polarity].is_none()
+                        && circuit.outputs.iter().any(|o| {
+                            injected.get(o.name()).copied().unwrap_or(Ternary::Unknown)
+                                != base[mask as usize]
+                                    .get(o.name())
+                                    .copied()
+                                    .unwrap_or(Ternary::Unknown)
                         })
-                        .collect();
-                    let inj_outs: Vec<Ternary> = circuit
-                        .outputs
-                        .iter()
-                        .map(|o| injected.get(o.name()).copied().unwrap_or(Ternary::Unknown))
-                        .collect();
-                    if inj_outs != base_outs {
-                        observable[polarity] = true;
+                    {
+                        witness[polarity] = Some(mask);
                     }
                 }
                 faults.push(Fault {
@@ -665,7 +687,8 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
                     input: probe.name().to_string(),
                     input_index,
                     stuck_at: stuck,
-                    observable: observable[polarity],
+                    observable: witness[polarity].is_some(),
+                    witness: witness[polarity],
                 });
             }
             if gate_values[0] == gate_values[1] {
@@ -719,24 +742,12 @@ fn topological_order(circuit: &Circuit) -> Result<Vec<usize>, CircuitError> {
 }
 
 /// 按给定输入组合模拟整个电路，返回所有信号取值。
+/// 二进制向量版本：`mask` 的 bit i 是第 i 个主输入（0/1）。
+#[cfg(test)]
 fn simulate_combo(
     circuit: &Circuit,
     combo: u64,
     alg: Algebra,
-    order: &[usize],
-) -> BTreeMap<String, Ternary> {
-    simulate_with_fault(circuit, combo, alg, None, order)
-}
-
-/// 模拟电路并注入一个 stuck-at 故障。
-///
-/// `fault` 为 `Some((门索引, 输入序号, 取值))`：只替换该门该输入引脚上的值，
-/// 不覆盖整条共享信号，因此不会影响同一信号的其他扇出。
-fn simulate_with_fault(
-    circuit: &Circuit,
-    combo: u64,
-    alg: Algebra,
-    fault: Option<(usize, usize, Ternary)>,
     order: &[usize],
 ) -> BTreeMap<String, Ternary> {
     let mut values: BTreeMap<String, Ternary> = BTreeMap::new();
@@ -744,13 +755,37 @@ fn simulate_with_fault(
     for inp in &circuit.inputs {
         let digit = t % 3;
         t /= 3;
-        let v = match digit {
+        let value = match digit {
             0 => Ternary::False,
             1 => Ternary::True,
             _ => Ternary::Unknown,
         };
-        values.insert(inp.name().to_string(), v);
+        values.insert(inp.name().to_string(), value);
     }
+    evaluate_with_fault(circuit, values, alg, None, order)
+}
+
+fn simulate_binary_with_fault(
+    circuit: &Circuit,
+    mask: u64,
+    alg: Algebra,
+    fault: Option<(usize, usize, Ternary)>,
+    order: &[usize],
+) -> BTreeMap<String, Ternary> {
+    evaluate_with_fault(circuit, circuit.decode_binary(mask), alg, fault, order)
+}
+
+/// 按拓扑序求值并注入一个 stuck-at 故障。
+///
+/// `fault` 为 `Some((门索引, 输入序号, 取值))`：只替换该门该输入引脚上的值，
+/// 不覆盖整条共享信号，因此不会影响同一信号的其他扇出。
+fn evaluate_with_fault(
+    circuit: &Circuit,
+    mut values: BTreeMap<String, Ternary>,
+    alg: Algebra,
+    fault: Option<(usize, usize, Ternary)>,
+    order: &[usize],
+) -> BTreeMap<String, Ternary> {
     // 按拓扑序求值
     for &idx in order {
         let gate = &circuit.gates[idx];
@@ -773,6 +808,18 @@ fn simulate_with_fault(
         values.insert(gate.output.name().to_string(), v);
     }
     values
+}
+
+/// 测试辅助：用给定赋值求值，可选注入门引脚故障。
+#[cfg(test)]
+pub(crate) fn simulate_for_test(
+    circuit: &Circuit,
+    inputs: &BTreeMap<String, Ternary>,
+    alg: Algebra,
+    fault: Option<(usize, usize, Ternary)>,
+) -> BTreeMap<String, Ternary> {
+    let order = topological_order(circuit).expect("测试电路应能拓扑排序");
+    evaluate_with_fault(circuit, inputs.clone(), alg, fault, &order)
 }
 
 #[cfg(test)]

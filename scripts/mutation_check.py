@@ -96,6 +96,14 @@ MUTANTS = [
         "filter": "counterexample_satisfies_premise",
     },
     {
+        "name": "atpg: 所有见证都记成 0 号向量",
+        "file": "crates/trit-circuit/src/circuit.rs",
+        "old": "                        witness[polarity] = Some(mask);",
+        "new": "                        witness[polarity] = Some(0);",
+        "pkg": "trit-circuit",
+        "filter": "atpg",
+    },
+    {
         "name": "bdd: is_valid 退回布尔全集",
         "file": "crates/trit-bdd/src/lib.rs",
         "old": "        self.bdd.not().and(&self.valid_free).is_false()",
@@ -148,7 +156,9 @@ def main() -> int:
             print(f"BAD MUTANT {mutant['name']}: anchor 出现 {count} 次")
             return 1
 
-        path.write_text(original.replace(mutant["old"], mutant["new"]), encoding="utf-8")
+        path.write_text(
+            original.replace(mutant["old"], mutant["new"]), encoding="utf-8"
+        )
         try:
             result = run_tests(*key)
         finally:

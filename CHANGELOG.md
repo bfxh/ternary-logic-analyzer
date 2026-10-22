@@ -1,5 +1,19 @@
 # Changelog
 
+## [未发布]
+
+### Added
+
+- `trit atpg <netlist>` 与 `trit_circuit::generate_tests`：门引脚 stuck-at 的测试向量生成
+  （贪心集合覆盖）+ 覆盖率报告。
+- `Fault::witness`（首个二进制区分向量）与 `Circuit::decode_binary`。
+
+### Changed
+
+- stuck-at 可测性判定改用 `2^n` 二进制测试向量；`X` 输入不是物理测试向量，`analyze` 的
+  `observable` 与 ATPG 口径一致。
+- 主输入超过 16 时故障分析返回 `CircuitError::TooManyInputs`。
+
 ## [0.6.0] - 2026-10-22
 
 ### Added

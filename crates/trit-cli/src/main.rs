@@ -150,6 +150,14 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 生成 stuck-at 测试向量并报告覆盖率。
+    Atpg {
+        /// 网表文件路径。
+        path: std::path::PathBuf,
+        /// 输出格式。
+        #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
+        format: Format,
+    },
     /// 验证三值决策表策略文件。
     Verify {
         /// 策略 JSON 路径。
@@ -259,6 +267,7 @@ fn main() -> Result<()> {
             assign,
             format,
         } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref()),
+        Commands::Atpg { path, format } => cmd_atpg(&path, format, &cli.algebra),
         Commands::Verify { path, engine, json } => cmd_verify(&path, &engine, json),
         Commands::Belnap { cmd } => cmd_belnap(cmd),
         Commands::Repl { algebra } => {
@@ -992,6 +1001,89 @@ fn cmd_circuit(
             if !untestable.is_empty() {
                 println!("\n不可测故障（stuck-at 无法观测）：");
                 for fault in untestable {
+                    println!(
+                        "  门 {} 的输入 {}[{}] stuck-at {}",
+                        fault.gate,
+                        fault.input,
+                        fault.input_index,
+                        fault.stuck_at.as_char()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `atpg` 子命令：生成 stuck-at 测试向量与覆盖率。
+fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()> {
+    let alg = resolve_algebra(alg_name)?;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取网表文件 {}", path.display()))?;
+    let circuit =
+        parse_netlist(&text).with_context(|| format!("网表解析失败：{}", path.display()))?;
+    if circuit.input_count() > 10 {
+        bail!(
+            "ATPG 最多 10 个主输入（2^11 = 2048 个向量 × 故障数），当前 {}",
+            circuit.input_count()
+        );
+    }
+    let report = trit_circuit::generate_tests(&circuit, alg)
+        .with_context(|| format!("ATPG 失败：{}", path.display()))?;
+
+    match format {
+        Format::Json => {
+            let obj = serde_json::json!({
+                "circuit": circuit.name,
+                "algebra": alg.as_str(),
+                "total_faults": report.faults.len(),
+                "testable": report.testable,
+                "coverage": report.coverage,
+                "patterns": report
+                    .patterns
+                    .iter()
+                    .map(|p| serde_json::json!({
+                        "inputs": p
+                            .inputs
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.as_char().to_string()))
+                            .collect::<BTreeMap<_, _>>(),
+                        "covers": p.covers,
+                    }))
+                    .collect::<Vec<_>>(),
+                "untestable": report
+                    .untestable
+                    .iter()
+                    .map(|f| serde_json::json!({
+                        "gate": f.gate,
+                        "input": f.input,
+                        "input_index": f.input_index,
+                        "stuck_at": f.stuck_at.as_char().to_string(),
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        }
+        _ => {
+            println!(
+                "覆盖率 {:.1}%（{}/{}），测试向量 {} 个",
+                report.coverage * 100.0,
+                report.testable,
+                report.faults.len(),
+                report.patterns.len()
+            );
+            for (i, pattern) in report.patterns.iter().enumerate() {
+                let inputs = pattern
+                    .inputs
+                    .iter()
+                    .map(|(name, value)| format!("{name}={}", value.as_char()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("#{} {inputs}  → {} 个故障", i + 1, pattern.covers.len());
+            }
+            if !report.untestable.is_empty() {
+                println!("\n不可测故障（{} 个）：", report.untestable.len());
+                for fault in &report.untestable {
                     println!(
                         "  门 {} 的输入 {}[{}] stuck-at {}",
                         fault.gate,
