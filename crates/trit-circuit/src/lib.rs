@@ -7,6 +7,6 @@ pub mod netlist;
 pub use atpg::{AtpgReport, CoverageStat, TestPattern, generate_tests};
 pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
-    SimulationRow, UntestableReason, analyze, propagate,
+    SimulationRow, UntestableReason, analyze, analyze_faults, propagate,
 };
 pub use netlist::{NetlistError, from_json, parse_netlist, to_json, to_netlist};

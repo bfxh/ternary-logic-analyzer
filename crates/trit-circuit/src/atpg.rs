@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
-use crate::circuit::{Circuit, CircuitError, Fault, analyze};
+use crate::circuit::{Circuit, CircuitError, Fault, analyze_faults};
 
 /// 一个测试向量，以及它覆盖的故障下标（对应 [`AtpgReport::faults`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,12 +216,12 @@ fn greedy_patterns(
 /// 小规模电路（`故障数 × 2^n ≤ 50000`）会枚举全部二进制向量，再做“覆盖最多
 /// 未覆盖故障”的贪心；否则退回只用每个故障的首个见证。平局取更小的 mask。
 pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, CircuitError> {
-    let report = analyze(circuit, alg)?;
-    let faults = report.faults;
+    let faults = analyze_faults(circuit, alg)?;
     let input_count = circuit.input_count();
     let testable_faults = faults.iter().filter(|f| f.observable).count();
+    // 全向量矩阵最多 256 个向量（n <= 8）；更大的电路只跑见证贪心，避免 2^n 重复模拟。
     let exhaustive =
-        input_count <= 10 && testable_faults.saturating_mul(1usize << input_count) <= 50_000;
+        input_count <= 8 && testable_faults.saturating_mul(1usize << input_count) <= 50_000;
     let by_mask = if exhaustive {
         full_coverage_matrix(circuit, alg, &faults)
     } else {

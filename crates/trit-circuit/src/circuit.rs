@@ -541,6 +541,13 @@ pub fn propagate(
 }
 
 /// 检查电路结构合法性。
+/// 只做故障分析，不做 `3^n` 输出域枚举（ATPG 用）。
+pub fn analyze_faults(circuit: &Circuit, alg: Algebra) -> Result<Vec<Fault>, CircuitError> {
+    validate(circuit)?;
+    let (_, faults) = detect_faults(circuit, alg)?;
+    Ok(faults)
+}
+
 fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
     for gate in &circuit.gates {
         let actual = if gate.kind == GateKind::Const {
@@ -1209,6 +1216,16 @@ mod tests {
             .expect("应有 SA-1");
         assert!(sa0.observable, "把常 1 拉到 0 会改变输出");
         assert!(!sa1.observable, "该引脚本来就是 1，SA-1 无变化");
+    }
+
+    #[test]
+    fn analyze_faults_matches_full_analyze() {
+        let circuit = and_circuit();
+        let full = analyze(&circuit, Algebra::Kleene).unwrap();
+        assert_eq!(
+            analyze_faults(&circuit, Algebra::Kleene).unwrap(),
+            full.faults
+        );
     }
 
     #[test]

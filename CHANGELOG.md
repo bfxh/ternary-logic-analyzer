@@ -9,6 +9,7 @@
 - WASM `atpg_js(netlist, algebra)`：浏览器里直接跑 ATPG，返回 JSON。
 - `satisfiable_bdd_with_order` / `premise_counterexample_bdd_with_order`，策略验证 `--bdd-order`。
 - 网表 JSON 互转：`trit_circuit::netlist::{to_json, from_json}` 与 CLI `trit netlist`。
+- `analyze_faults`：ATPG 不再做 `3^n` 输出域枚举；全向量搜索收紧到 ≤8 个主输入。
 - `BddRequest`（顺序 + 预算）与 `*_with` 系列 API；CLI `equiv/quantify/verify --bdd-max-nodes`。
 - `verify --bdd-order best`：四种排序取断言 BDD 节点总数最少者。
 - ATPG 随机电路属性测试：每个向量必须真的检出它声称覆盖的故障。
