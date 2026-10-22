@@ -190,9 +190,12 @@ enum Commands {
         /// 时钟周期（周期数）；省略时取关键路径，即 slack 全为 0。
         #[arg(long, value_name = "CYCLES")]
         clock: Option<u32>,
-        /// 门延迟（单位周期）。
+        /// 门延迟（单位周期）；被 --library 覆盖。
         #[arg(long, default_value_t = 1)]
         delay: u32,
+        /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
+        #[arg(long, value_name = "FILE")]
+        library: Option<std::path::PathBuf>,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -338,8 +341,9 @@ fn main() -> Result<()> {
             from,
             clock,
             delay,
+            library,
             format,
-        } => cmd_timing(&path, &from, clock, delay, format),
+        } => cmd_timing(&path, &from, clock, delay, library.as_deref(), format),
         Commands::Netlist { path, from, to } => cmd_netlist(&path, &from, &to),
         Commands::Verify {
             path,
@@ -1211,14 +1215,23 @@ fn cmd_timing(
     from: &str,
     clock: Option<u32>,
     delay: u32,
+    library: Option<&std::path::Path>,
     format: Format,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
-    let report = trit_circuit::timing::analyze_timing(
-        &circuit,
-        trit_circuit::timing::TimingModel { delay },
-        clock,
-    )?;
+    let model = match library {
+        Some(library) => {
+            let text = std::fs::read_to_string(library)
+                .with_context(|| format!("无法读取时序库 {}", library.display()))?;
+            trit_circuit::timing::TimingModel::from_json(&text)
+                .with_context(|| format!("时序库解析失败：{}", library.display()))?
+        }
+        None => trit_circuit::timing::TimingModel {
+            default_delay: delay,
+            ..Default::default()
+        },
+    };
+    let report = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
     match format {
         Format::Json => {
             let obj = serde_json::json!({

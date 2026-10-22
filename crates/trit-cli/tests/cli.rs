@@ -512,3 +512,21 @@ fn atpg_accepts_verilog() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("覆盖率 100.0%"), "{stdout}");
 }
+
+#[test]
+fn timing_uses_library_delays() {
+    let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let circuit = fixtures.join("chain3.net");
+    let library = fixtures.join("timing.json");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        circuit.to_str().unwrap(),
+        "--library",
+        library.to_str().unwrap(),
+        "--clock",
+        "10",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("关键路径 4"), "{stdout}");
+    assert!(stdout.contains("slack=6"), "{stdout}");
+}

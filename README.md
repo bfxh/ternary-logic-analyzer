@@ -136,6 +136,8 @@ trit timing design.net --clock 10
 trit timing design.v --from verilog --delay 2 --format json
 ```
 
+`--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`。
+
 ## BDD 引擎（`--bdd`）
 
 第三条等价路径：把双导轨直接建成 BDD，差集 BDD 为 false 即等价。BDD 是 canonical 的，

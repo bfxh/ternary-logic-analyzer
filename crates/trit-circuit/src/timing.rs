@@ -2,18 +2,47 @@
 
 use std::collections::BTreeMap;
 
-use crate::circuit::{Circuit, CircuitError, topological_order, validate};
+use crate::circuit::{Circuit, CircuitError, GateKind, topological_order, validate};
 
-/// 时序模型：所有门同一延迟（常量门为 0）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 时序模型：每类门一个延迟；未列出的用 `default_delay`（常量门恒为 0）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct TimingModel {
-    /// 每个非常量门的延迟。
-    pub delay: u32,
+    /// 未在 `delays` 里列出的门的延迟。
+    pub default_delay: u32,
+    /// 门类型（`AND` / `OR` / ...）到延迟的映射。
+    pub delays: BTreeMap<String, u32>,
 }
 
 impl Default for TimingModel {
     fn default() -> Self {
-        Self { delay: 1 }
+        Self {
+            default_delay: 1,
+            delays: BTreeMap::new(),
+        }
+    }
+}
+
+impl TimingModel {
+    /// 某类门的延迟；常量门为 0。
+    pub fn delay_for(&self, kind: GateKind) -> u32 {
+        if kind == GateKind::Const {
+            return 0;
+        }
+        self.delays
+            .get(kind.as_str())
+            .copied()
+            .unwrap_or(self.default_delay)
+    }
+
+    /// 从 JSON 读取（形如 `{"default_delay":1,"delays":{"AND":2}}`）。
+    pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
+    }
+
+    /// 序列化为 JSON。
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
     }
 }
 
@@ -64,12 +93,10 @@ pub fn analyze_timing(
             .map(|signal| arrival.get(signal.name()).copied().unwrap_or(0))
             .max()
             .unwrap_or(0);
-        let delay = if gate.kind == crate::circuit::GateKind::Const {
-            0
-        } else {
-            model.delay
-        };
-        arrival.insert(gate.output.name().to_string(), start.saturating_add(delay));
+        arrival.insert(
+            gate.output.name().to_string(),
+            start.saturating_add(model.delay_for(gate.kind)),
+        );
     }
     let critical_path = circuit
         .outputs
@@ -86,12 +113,7 @@ pub fn analyze_timing(
     for &index in order.iter().rev() {
         let gate = &circuit.gates[index];
         let output_required = required.get(gate.output.name()).copied().unwrap_or(clock);
-        let delay = if gate.kind == crate::circuit::GateKind::Const {
-            0
-        } else {
-            model.delay
-        };
-        let input_required = output_required.saturating_sub(delay);
+        let input_required = output_required.saturating_sub(model.delay_for(gate.kind));
         for input in &gate.inputs {
             let entry = required
                 .entry(input.name().to_string())
@@ -164,5 +186,29 @@ mod tests {
         circuit.add_output(Signal::new("one"));
         let report = analyze_timing(&circuit, TimingModel::default(), None).unwrap();
         assert_eq!(report.critical_path, 1);
+    }
+
+    #[test]
+    fn per_kind_delays_and_json_model() {
+        let circuit = parse_netlist(
+            "input a
+input b
+input c
+gate AND a b n
+gate OR n c y
+output y
+",
+        )
+        .unwrap();
+        let mut model = TimingModel::default();
+        model.delays.insert("AND".to_string(), 2);
+        model.delays.insert("OR".to_string(), 3);
+        let report = analyze_timing(&circuit, model.clone(), None).unwrap();
+        assert_eq!(report.critical_path, 5);
+
+        let json = model.to_json().unwrap();
+        let again = TimingModel::from_json(&json).unwrap();
+        assert_eq!(again.delay_for(GateKind::And), 2);
+        assert_eq!(again.delay_for(GateKind::Xor), 1);
     }
 }

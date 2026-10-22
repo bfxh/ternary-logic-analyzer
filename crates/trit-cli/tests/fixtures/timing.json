@@ -1,0 +1,4 @@
+{
+  "default_delay": 1,
+  "delays": { "AND": 2, "OR": 3 }
+}

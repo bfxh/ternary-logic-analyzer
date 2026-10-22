@@ -12,7 +12,7 @@
 - `analyze_faults`：ATPG 不再做 `3^n` 输出域枚举；全向量搜索收紧到 ≤8 个主输入。
 - 索引化仿真器（`Simulator`）：故障分析/覆盖矩阵不再逐向量建 `BTreeMap`。
 - 结构化 Verilog 子集：`parse_verilog` / `to_verilog`，CLI `netlist --from verilog --to verilog`。
-- STA-lite：`analyze_timing` 与 `trit timing`（单位延迟、required/slack、违例）。
+- STA-lite：`analyze_timing` 与 `trit timing`（required/slack、违例）；`TimingModel` 支持按门类型延迟与 JSON 库。
 - `circuit` / `atpg` 支持 `--from text|json|verilog`。
 - `BddRequest`（顺序 + 预算）与 `*_with` 系列 API；CLI `equiv/quantify/verify --bdd-max-nodes`。
 - `verify --bdd-order best`：四种排序取断言 BDD 节点总数最少者。
