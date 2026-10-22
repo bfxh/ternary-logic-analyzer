@@ -72,6 +72,77 @@ pub struct TimingReport {
     pub violations: usize,
 }
 
+/// 一条时序路径（信号序列，从主输入/常量到主输出）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimingPath {
+    /// 终点主输出。
+    pub output: String,
+    /// 信号序列。
+    pub signals: Vec<String>,
+    /// 路径延迟。
+    pub delay: u32,
+}
+
+/// 计算每个输出最多 `limit` 条最慢路径（DAG 上的 k-best 动态规划）。
+pub fn critical_paths(
+    circuit: &Circuit,
+    model: TimingModel,
+    limit: usize,
+) -> Result<Vec<TimingPath>, CircuitError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    validate(circuit)?;
+    let order = topological_order(circuit)?;
+    let mut best: BTreeMap<String, Vec<(u32, Vec<String>)>> = BTreeMap::new();
+    for input in &circuit.inputs {
+        best.insert(
+            input.name().to_string(),
+            vec![(0, vec![input.name().to_string()])],
+        );
+    }
+    for &index in &order {
+        let gate = &circuit.gates[index];
+        let output = gate.output.name().to_string();
+        let delay = model.delay_for(gate.kind);
+        let mut candidates: Vec<(u32, Vec<String>)> = Vec::new();
+        if gate.kind == GateKind::Const {
+            candidates.push((0, vec![output.clone()]));
+        } else {
+            for input in &gate.inputs {
+                if let Some(paths) = best.get(input.name()) {
+                    for (path_delay, signals) in paths {
+                        let mut path = signals.clone();
+                        path.push(output.clone());
+                        candidates.push((path_delay.saturating_add(delay), path));
+                    }
+                }
+            }
+        }
+        candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+        candidates.truncate(limit);
+        best.insert(output, candidates);
+    }
+    let mut paths: Vec<TimingPath> = Vec::new();
+    for output in &circuit.outputs {
+        for (delay, signals) in best.get(output.name()).cloned().unwrap_or_default() {
+            paths.push(TimingPath {
+                output: output.name().to_string(),
+                signals,
+                delay,
+            });
+        }
+    }
+    paths.sort_by(|left, right| {
+        right
+            .delay
+            .cmp(&left.delay)
+            .then_with(|| left.signals.cmp(&right.signals))
+    });
+    paths.truncate(limit);
+    Ok(paths)
+}
+
 /// 计算组合时序。
 pub fn analyze_timing(
     circuit: &Circuit,
@@ -210,5 +281,27 @@ output y
         let again = TimingModel::from_json(&json).unwrap();
         assert_eq!(again.delay_for(GateKind::And), 2);
         assert_eq!(again.delay_for(GateKind::Xor), 1);
+    }
+
+    #[test]
+    fn critical_paths_enumerates_k_best() {
+        let circuit = parse_netlist(
+            "input a
+input b
+gate AND a b n
+buf n m
+gate OR a m y
+output y
+",
+        )
+        .unwrap();
+        let paths = critical_paths(&circuit, TimingModel::default(), 3).unwrap();
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0].delay, 3);
+        assert_eq!(paths[0].signals, vec!["a", "n", "m", "y"]);
+        assert_eq!(paths[1].delay, 3);
+        assert_eq!(paths[2].delay, 1);
+        let top = critical_paths(&circuit, TimingModel::default(), 1).unwrap();
+        assert_eq!(top.len(), 1);
     }
 }

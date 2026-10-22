@@ -137,6 +137,7 @@ trit timing design.v --from verilog --delay 2 --format json
 ```
 
 `--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`。
+`--paths N` 列出最慢的 N 条路径（信号序列 + 延迟）；JSON 里是 `paths`。
 
 ## BDD 引擎（`--bdd`）
 

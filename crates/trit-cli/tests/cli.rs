@@ -530,3 +530,21 @@ fn timing_uses_library_delays() {
     assert!(stdout.contains("关键路径 4"), "{stdout}");
     assert!(stdout.contains("slack=6"), "{stdout}");
 }
+
+#[test]
+fn timing_lists_critical_paths() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chain3.net");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        path.to_str().unwrap(),
+        "--paths",
+        "2",
+        "--clock",
+        "10",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("#1 delay=2"), "{stdout}");
+    assert!(stdout.contains("#2 delay=2"), "{stdout}");
+    assert!(stdout.contains(" -> y"), "{stdout}");
+}

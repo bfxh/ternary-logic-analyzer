@@ -196,6 +196,9 @@ enum Commands {
         /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// 列出最慢的 N 条路径（0 = 不列）。
+        #[arg(long, default_value_t = 0)]
+        paths: usize,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -342,8 +345,17 @@ fn main() -> Result<()> {
             clock,
             delay,
             library,
+            paths,
             format,
-        } => cmd_timing(&path, &from, clock, delay, library.as_deref(), format),
+        } => cmd_timing(
+            &path,
+            &from,
+            clock,
+            delay,
+            library.as_deref(),
+            paths,
+            format,
+        ),
         Commands::Netlist { path, from, to } => cmd_netlist(&path, &from, &to),
         Commands::Verify {
             path,
@@ -1216,6 +1228,7 @@ fn cmd_timing(
     clock: Option<u32>,
     delay: u32,
     library: Option<&std::path::Path>,
+    paths: usize,
     format: Format,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
@@ -1231,7 +1244,8 @@ fn cmd_timing(
             ..Default::default()
         },
     };
-    let report = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
+    let report = trit_circuit::timing::analyze_timing(&circuit, model.clone(), clock)?;
+    let paths = trit_circuit::timing::critical_paths(&circuit, model, paths)?;
     match format {
         Format::Json => {
             let obj = serde_json::json!({
@@ -1245,6 +1259,11 @@ fn cmd_timing(
                     "required": output.required,
                     "slack": output.slack,
                 })).collect::<Vec<_>>(),
+                "paths": paths.iter().map(|path| serde_json::json!({
+                    "output": path.output,
+                    "signals": path.signals,
+                    "delay": path.delay,
+                })).collect::<Vec<_>>(),
             });
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
@@ -1257,6 +1276,14 @@ fn cmd_timing(
                 println!(
                     "  {}  arrival={} required={} slack={}",
                     output.name, output.arrival, output.required, output.slack
+                );
+            }
+            for (index, path) in paths.iter().enumerate() {
+                println!(
+                    "  #{} delay={} {}",
+                    index + 1,
+                    path.delay,
+                    path.signals.join(" -> ")
                 );
             }
         }
