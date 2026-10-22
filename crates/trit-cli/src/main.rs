@@ -1145,6 +1145,30 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
             });
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
+        Format::Csv => {
+            let mut out = String::from("pattern");
+            for input in &circuit.inputs {
+                out.push(',');
+                out.push_str(input.name());
+            }
+            out.push_str(",covered\n");
+            for (index, pattern) in report.patterns.iter().enumerate() {
+                out.push_str(&(index + 1).to_string());
+                for input in &circuit.inputs {
+                    let value = pattern
+                        .inputs
+                        .get(input.name())
+                        .copied()
+                        .unwrap_or(Ternary::Unknown);
+                    out.push(',');
+                    out.push(value.as_char());
+                }
+                out.push(',');
+                out.push_str(&pattern.covers.len().to_string());
+                out.push('\n');
+            }
+            print!("{out}");
+        }
         _ => {
             println!(
                 "覆盖率 {:.1}%（{}/{}），测试向量 {} 个（{}）",

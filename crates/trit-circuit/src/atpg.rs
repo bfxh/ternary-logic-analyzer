@@ -427,6 +427,96 @@ mod tests {
         assert!(checked >= 8, "有效实例太少：{checked}");
     }
 
+    fn lcg(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *state >> 33
+    }
+
+    fn random_circuit(state: &mut u64) -> Circuit {
+        let mut circuit = Circuit::new("random");
+        let mut signals: Vec<String> = Vec::new();
+        for name in ["a", "b", "c"] {
+            circuit.add_input(sig(name));
+            signals.push(name.to_string());
+        }
+        let kinds = [
+            GateKind::And,
+            GateKind::Or,
+            GateKind::Xor,
+            GateKind::Nand,
+            GateKind::Nor,
+        ];
+        for index in 0..5 {
+            let kind = kinds[(lcg(state) as usize) % kinds.len()];
+            let left = signals[(lcg(state) as usize) % signals.len()].clone();
+            let right = signals[(lcg(state) as usize) % signals.len()].clone();
+            let output = format!("n{index}");
+            circuit.add_gate(Gate::new(
+                kind,
+                vec![Signal::new(left), Signal::new(right)],
+                Signal::new(output.clone()),
+            ));
+            signals.push(output);
+        }
+        circuit.add_output(Signal::new(signals[3].clone()));
+        circuit.add_output(Signal::new(signals[5].clone()));
+        circuit
+    }
+
+    #[test]
+    fn random_circuits_patterns_really_detect_faults() {
+        for seed in 1..=12u64 {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let circuit = random_circuit(&mut state);
+            let report = generate_tests(&circuit, Algebra::Kleene).unwrap();
+            assert_eq!(
+                report.testable,
+                report.faults.iter().filter(|f| f.observable).count(),
+                "seed {seed}"
+            );
+            let mut seen = vec![0usize; report.faults.len()];
+            for pattern in &report.patterns {
+                for &index in &pattern.covers {
+                    seen[index] += 1;
+                    let fault = &report.faults[index];
+                    let gate_index = circuit
+                        .gates
+                        .iter()
+                        .position(|gate| gate.output.name() == fault.gate)
+                        .expect("故障应能定位到门");
+                    let good = crate::circuit::simulate_assignment(
+                        &circuit,
+                        &pattern.inputs,
+                        Algebra::Kleene,
+                        None,
+                    );
+                    let bad = crate::circuit::simulate_assignment(
+                        &circuit,
+                        &pattern.inputs,
+                        Algebra::Kleene,
+                        Some((gate_index, fault.input_index, fault.stuck_at)),
+                    );
+                    assert!(
+                        circuit
+                            .outputs
+                            .iter()
+                            .any(|output| good.get(output.name()) != bad.get(output.name())),
+                        "seed {seed} 的向量没有检出故障 {index}"
+                    );
+                }
+            }
+            for (index, fault) in report.faults.iter().enumerate() {
+                if fault.observable {
+                    assert_eq!(seen[index], 1, "seed {seed} 故障 {index} 覆盖次数");
+                } else {
+                    assert_eq!(seen[index], 0, "seed {seed} 不可测故障不应被覆盖");
+                }
+            }
+        }
+    }
+
     #[test]
     fn coverage_breaks_down_by_gate_kind() {
         let mut c = Circuit::new("dead");

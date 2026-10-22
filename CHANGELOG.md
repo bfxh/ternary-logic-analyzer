@@ -1,5 +1,12 @@
 # Changelog
 
+## [未发布]
+
+### Added
+
+- `trit atpg --format csv`：`pattern,<输入…>,covered`，便于导出给外部仿真器。
+- ATPG 随机电路属性测试：每个向量必须真的检出它声称覆盖的故障。
+
 ## [0.7.0] - 2026-10-22
 
 ATPG 与 BDD 的一批新能力；`Fault` 结构体有破坏性变更。

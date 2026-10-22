@@ -395,3 +395,18 @@ fn quantify_accepts_bdd_order() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("\"bdd_order\""), "{stdout}");
 }
+
+#[test]
+fn atpg_csv_has_header_and_rows() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (stdout, stderr, code) = run(&["atpg", path.to_str().unwrap(), "--format", "csv"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("pattern,a,b,covered"));
+    let rows: Vec<&str> = lines.collect();
+    assert_eq!(rows.len(), 3, "AND 门 3 个向量：{stdout}");
+    assert!(
+        rows.iter().all(|row| row.split(',').count() == 4),
+        "{stdout}"
+    );
+}
