@@ -876,9 +876,8 @@ fn evaluate_with_fault(
     values
 }
 
-/// 测试辅助：用给定赋值求值，可选注入门引脚故障。
-#[cfg(test)]
-pub(crate) fn simulate_for_test(
+/// crate 内辅助：用给定赋值求值，可选注入门引脚故障。
+pub(crate) fn simulate_assignment(
     circuit: &Circuit,
     inputs: &BTreeMap<String, Ternary>,
     alg: Algebra,

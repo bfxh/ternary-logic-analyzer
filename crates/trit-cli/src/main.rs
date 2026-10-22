@@ -1042,6 +1042,7 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
                 "total_faults": report.faults.len(),
                 "testable": report.testable,
                 "coverage": report.coverage,
+                "exhaustive": report.exhaustive,
                 "by_gate_kind": report
                     .by_gate_kind
                     .iter()
@@ -1082,11 +1083,16 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
         }
         _ => {
             println!(
-                "覆盖率 {:.1}%（{}/{}），测试向量 {} 个",
+                "覆盖率 {:.1}%（{}/{}），测试向量 {} 个（{}）",
                 report.coverage * 100.0,
                 report.testable,
                 report.faults.len(),
-                report.patterns.len()
+                report.patterns.len(),
+                if report.exhaustive {
+                    "全向量搜索"
+                } else {
+                    "见证贪心"
+                }
             );
             let kinds = report
                 .by_gate_kind

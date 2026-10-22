@@ -51,22 +51,83 @@ pub struct AtpgReport {
     pub coverage: f64,
     /// 按门类型（`And` / `Or` / ...）的覆盖统计。
     pub by_gate_kind: BTreeMap<&'static str, CoverageStat>,
+    /// 是否对全部 `2^n` 向量做了覆盖搜索（否则只用了各故障的首个见证）。
+    pub exhaustive: bool,
 }
 
-/// 生成 stuck-at 测试向量。
-///
-/// 每个可观测故障的 `witness` 已由分析阶段给出（首个二进制区分向量）；
-/// 这里按“覆盖最多未覆盖故障”贪心选向量，平局取更小的 mask 以保证确定性。
-pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, CircuitError> {
-    let report = analyze(circuit, alg)?;
-    let faults = report.faults;
+fn witness_map(faults: &[Fault]) -> BTreeMap<u64, Vec<usize>> {
     let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (index, fault) in faults.iter().enumerate() {
         if let Some(mask) = fault.witness {
             by_mask.entry(mask).or_default().push(index);
         }
     }
-    let testable = by_mask.values().map(Vec::len).sum();
+    by_mask
+}
+
+/// 枚举全部二进制向量，记录每个向量能检出哪些故障。
+fn full_coverage_matrix(
+    circuit: &Circuit,
+    alg: Algebra,
+    faults: &[Fault],
+) -> BTreeMap<u64, Vec<usize>> {
+    let gate_of: BTreeMap<&str, usize> = circuit
+        .gates
+        .iter()
+        .enumerate()
+        .map(|(index, gate)| (gate.output.name(), index))
+        .collect();
+    let total = 1u64 << circuit.input_count();
+    let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for mask in 0..total {
+        let inputs = circuit.decode_binary(mask);
+        let good = crate::circuit::simulate_assignment(circuit, &inputs, alg, None);
+        let mut covers = Vec::new();
+        for (index, fault) in faults.iter().enumerate() {
+            if !fault.observable {
+                continue;
+            }
+            let Some(&gate_index) = gate_of.get(fault.gate.as_str()) else {
+                continue;
+            };
+            let bad = crate::circuit::simulate_assignment(
+                circuit,
+                &inputs,
+                alg,
+                Some((gate_index, fault.input_index, fault.stuck_at)),
+            );
+            if circuit
+                .outputs
+                .iter()
+                .any(|o| good.get(o.name()) != bad.get(o.name()))
+            {
+                covers.push(index);
+            }
+        }
+        if !covers.is_empty() {
+            by_mask.insert(mask, covers);
+        }
+    }
+    by_mask
+}
+
+/// 生成 stuck-at 测试向量。
+///
+/// 小规模电路（`故障数 × 2^n ≤ 50000`）会枚举全部二进制向量，再做“覆盖最多
+/// 未覆盖故障”的贪心；否则退回只用每个故障的首个见证。平局取更小的 mask。
+pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, CircuitError> {
+    let report = analyze(circuit, alg)?;
+    let faults = report.faults;
+    let input_count = circuit.input_count();
+    let testable_faults = faults.iter().filter(|f| f.observable).count();
+    let exhaustive =
+        input_count <= 10 && testable_faults.saturating_mul(1usize << input_count) <= 50_000;
+    let by_mask = if exhaustive {
+        full_coverage_matrix(circuit, alg, &faults)
+    } else {
+        witness_map(&faults)
+    };
+    let testable = faults.iter().filter(|f| f.observable).count();
     let mut uncovered: Vec<bool> = faults.iter().map(|f| f.observable).collect();
     let mut patterns: Vec<TestPattern> = Vec::new();
 
@@ -130,6 +191,7 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
         untestable,
         coverage,
         by_gate_kind,
+        exhaustive,
     })
 }
 
@@ -196,6 +258,28 @@ mod tests {
     }
 
     #[test]
+    fn full_search_uses_multi_fault_vectors() {
+        let mut c = Circuit::new("buffers");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_input(sig("c"));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("x")));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("b")], sig("y")));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("c")], sig("z")));
+        c.add_output(sig("x"));
+        c.add_output(sig("y"));
+        c.add_output(sig("z"));
+
+        let report = generate_tests(&c, Algebra::Kleene).unwrap();
+        assert!(report.exhaustive);
+        assert_eq!(report.faults.len(), 6);
+        assert_eq!(report.testable, 6);
+        assert_eq!(report.patterns.len(), 2, "全 0 与全 1 各覆盖 3 个故障");
+        let covered: usize = report.patterns.iter().map(|p| p.covers.len()).sum();
+        assert_eq!(covered, 6);
+    }
+
+    #[test]
     fn coverage_breaks_down_by_gate_kind() {
         let mut c = Circuit::new("dead");
         c.add_input(sig("a"));
@@ -225,13 +309,13 @@ mod tests {
                     .iter()
                     .position(|g| g.output.name() == fault.gate)
                     .expect("故障应能定位到门");
-                let good = crate::circuit::simulate_for_test(
+                let good = crate::circuit::simulate_assignment(
                     &circuit,
                     &pattern.inputs,
                     Algebra::Kleene,
                     None,
                 );
-                let bad = crate::circuit::simulate_for_test(
+                let bad = crate::circuit::simulate_assignment(
                     &circuit,
                     &pattern.inputs,
                     Algebra::Kleene,
