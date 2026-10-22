@@ -2,9 +2,11 @@
 
 pub mod atpg;
 pub mod circuit;
+pub mod netlist;
 
 pub use atpg::{AtpgReport, CoverageStat, TestPattern, generate_tests};
 pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
     SimulationRow, UntestableReason, analyze, propagate,
 };
+pub use netlist::{NetlistError, parse_netlist, to_netlist};

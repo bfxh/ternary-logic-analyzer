@@ -931,6 +931,7 @@ version = "0.7.0"
 dependencies = [
  "serde_json",
  "trit-belnap",
+ "trit-circuit",
  "trit-core",
  "trit-eval",
  "wasm-bindgen",

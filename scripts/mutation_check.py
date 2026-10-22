@@ -112,6 +112,14 @@ MUTANTS = [
         "filter": "untestable_reasons",
     },
     {
+        "name": "netlist: gate 参数计数失效",
+        "file": "crates/trit-circuit/src/netlist.rs",
+        "old": "                if parts.len() != 5 {",
+        "new": "                if false {",
+        "pkg": "trit-circuit",
+        "filter": "reports_line_numbers",
+    },
+    {
         "name": "atpg: 精确覆盖递归错误清除已覆盖位",
         "file": "crates/trit-circuit/src/atpg.rs",
         "old": "        search_cover(uncovered & !faults, chosen, best, sets, max_gain, budget);",

@@ -6,6 +6,7 @@
 use serde_json::{Map, Value, json};
 use wasm_bindgen::prelude::*;
 
+use trit_circuit::netlist::parse_netlist;
 use trit_core::algebra::Algebra;
 use trit_core::limits::{Limits, check_expr};
 use trit_core::parser::Parser;
@@ -232,4 +233,37 @@ mod tests {
         let value: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(value["rows"].as_array().unwrap().len(), 4);
     }
+}
+
+/// 对网表做 ATPG，返回覆盖率、测试向量与不可测故障数（JSON 字符串）。
+#[wasm_bindgen]
+pub fn atpg_js(netlist: &str, algebra: &str) -> Result<String, JsValue> {
+    let alg = parse_algebra(algebra)?;
+    let circuit = parse_netlist(netlist).map_err(|e| js_err(format!("{e}")))?;
+    if circuit.input_count() > 10 {
+        return Err(js_err("ATPG 最多 10 个主输入"));
+    }
+    let report = trit_circuit::generate_tests(&circuit, alg).map_err(|e| js_err(format!("{e}")))?;
+    let patterns: Vec<Value> = report
+        .patterns
+        .iter()
+        .map(|pattern| {
+            let inputs: serde_json::Map<String, Value> = pattern
+                .inputs
+                .iter()
+                .map(|(name, value)| (name.clone(), Value::String(value.as_char().to_string())))
+                .collect();
+            json!({ "inputs": inputs, "covers": pattern.covers })
+        })
+        .collect();
+    Ok(json!({
+        "coverage": report.coverage,
+        "testable": report.testable,
+        "total": report.faults.len(),
+        "optimal": report.optimal,
+        "exhaustive": report.exhaustive,
+        "patterns": patterns,
+        "untestable": report.untestable.len(),
+    })
+    .to_string())
 }

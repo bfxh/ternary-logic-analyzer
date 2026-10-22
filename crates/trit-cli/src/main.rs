@@ -22,7 +22,7 @@ use trit_bdd::{
     Quantifier, VarOrder, equivalent_bdd, equivalent_bdd_best, equivalent_bdd_with_order,
     order_variables, quantify_bdd, quantify_bdd_best, quantify_bdd_with_order,
 };
-use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
+use trit_circuit::netlist::parse_netlist;
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::limits::Limits;
@@ -1225,85 +1225,6 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str) -> Result<()
         }
     }
     Ok(())
-}
-
-/// 解析网表文本。
-fn parse_netlist(text: &str) -> Result<Circuit> {
-    let mut circuit = Circuit::new("netlist");
-    for (lineno, raw) in text.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        let ctx = format!("第 {} 行", lineno + 1);
-        match parts[0] {
-            "input" => {
-                if parts.len() != 2 {
-                    bail!("{ctx}: input 需要 1 个参数");
-                }
-                circuit.add_input(Signal::new(parts[1]));
-            }
-            "output" => {
-                if parts.len() != 2 {
-                    bail!("{ctx}: output 需要 1 个参数");
-                }
-                circuit.add_output(Signal::new(parts[1]));
-            }
-            "gate" => {
-                if parts.len() != 5 {
-                    bail!("{ctx}: gate 语法为 `gate <类型> <输入1> <输入2> <输出>`");
-                }
-                let kind = GateKind::parse(parts[1])
-                    .with_context(|| format!("{ctx}: 未知门类型 {:?}", parts[1]))?;
-                let inputs = vec![Signal::new(parts[2]), Signal::new(parts[3])];
-                circuit.add_gate(Gate::new(kind, inputs, Signal::new(parts[4])));
-            }
-            "not" => {
-                if parts.len() != 3 {
-                    bail!("{ctx}: not 语法为 `not <输入> <输出>`");
-                }
-                circuit.add_gate(Gate::new(
-                    GateKind::Not,
-                    vec![Signal::new(parts[1])],
-                    Signal::new(parts[2]),
-                ));
-            }
-            "buf" => {
-                if parts.len() != 3 {
-                    bail!("{ctx}: buf 语法为 `buf <输入> <输出>`");
-                }
-                circuit.add_gate(Gate::new(
-                    GateKind::Buf,
-                    vec![Signal::new(parts[1])],
-                    Signal::new(parts[2]),
-                ));
-            }
-            "const" => {
-                if parts.len() != 3 {
-                    bail!("{ctx}: const 语法为 `const <0|1|X> <输出>`");
-                }
-                let mut chars = parts[1].chars();
-                let ch = chars
-                    .next()
-                    .with_context(|| format!("{ctx}: const 缺取值"))?;
-                if chars.next().is_some() {
-                    bail!("{ctx}: const 的取值只能是单个字符 0/1/X");
-                }
-                let value = Ternary::parse_char(ch)
-                    .with_context(|| format!("{ctx}: const 取值 {ch:?} 不是 0/1/X"))?;
-                circuit.add_gate(Gate::constant(value, Signal::new(parts[2])));
-            }
-            other => bail!("{ctx}: 未知指令 {other:?}"),
-        }
-    }
-    if circuit.inputs.is_empty() {
-        bail!("网表没有主输入");
-    }
-    if circuit.outputs.is_empty() {
-        bail!("网表没有主输出");
-    }
-    Ok(circuit)
 }
 
 /// `belnap` 子命令：Belnap 四值（opt-in）。
