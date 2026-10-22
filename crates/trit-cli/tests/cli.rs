@@ -410,3 +410,20 @@ fn atpg_csv_has_header_and_rows() {
         "{stdout}"
     );
 }
+
+#[test]
+fn verify_accepts_bdd_order() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/admission.json");
+    let (stdout, stderr, code) = run(&[
+        "verify",
+        path.to_str().unwrap(),
+        "--engine",
+        "bdd",
+        "--bdd-order",
+        "reverse",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("OK"), "{stdout}");
+    assert!(stdout.contains("2 条断言"), "{stdout}");
+}

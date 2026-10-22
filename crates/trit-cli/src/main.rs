@@ -174,6 +174,9 @@ enum Commands {
         /// 引擎：sat（默认）或 bdd。
         #[arg(long, default_value = "sat")]
         engine: String,
+        /// BDD 变量排序（仅 --engine bdd）：appearance（默认）/ reverse / frequency / frequency-asc。
+        #[arg(long, value_name = "ORDER", default_value = "appearance")]
+        bdd_order: String,
         /// JSON 输出。
         #[arg(long)]
         json: bool,
@@ -281,7 +284,12 @@ fn main() -> Result<()> {
             format,
         } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref()),
         Commands::Atpg { path, format } => cmd_atpg(&path, format, &cli.algebra),
-        Commands::Verify { path, engine, json } => cmd_verify(&path, &engine, json),
+        Commands::Verify {
+            path,
+            engine,
+            bdd_order,
+            json,
+        } => cmd_verify(&path, &engine, &bdd_order, json),
         Commands::Belnap { cmd } => cmd_belnap(cmd),
         Commands::Repl { algebra } => {
             let alg_name = algebra.unwrap_or(cli.algebra);
@@ -774,13 +782,19 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
 }
 
 /// `verify` 子命令。
-fn cmd_verify(path: &std::path::Path, engine: &str, json: bool) -> Result<()> {
+fn cmd_verify(path: &std::path::Path, engine: &str, bdd_order: &str, json: bool) -> Result<()> {
     let Some(engine) = Engine::parse(engine) else {
         bail!("未知引擎 {engine:?}，可选 sat / bdd");
     };
+    let order = match bdd_order {
+        "appearance" => None,
+        name => {
+            Some(VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?)
+        }
+    };
     let policy = Policy::load(path)?;
     let assumptions = policy.assumptions.len();
-    let results = policy.verify(engine)?;
+    let results = policy.verify_with_bdd_order(engine, order)?;
     let failed = results.iter().filter(|r| !r.holds).count();
     if json {
         let assertions = results

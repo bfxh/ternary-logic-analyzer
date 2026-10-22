@@ -1,5 +1,5 @@
 use trit_core::value::Ternary;
-use trit_policy::{Engine, Policy, PolicyError};
+use trit_policy::{Engine, Policy, PolicyError, VarOrder};
 
 const ADMISSION: &str = r#"{
   "algebra": "kleene",
@@ -187,4 +187,23 @@ fn counterexample_respects_assumptions() {
         Some(Ternary::True),
         "反例必须满足前提"
     );
+}
+
+#[test]
+fn bdd_order_does_not_change_admission_results() {
+    let policy = Policy::from_json(ADMISSION).expect("策略应可解析");
+    let base = policy.verify(Engine::Bdd).expect("验证不应报错");
+    for order in [
+        VarOrder::Reverse,
+        VarOrder::FrequencyDesc,
+        VarOrder::FrequencyAsc,
+    ] {
+        let got = policy
+            .verify_with_bdd_order(Engine::Bdd, Some(order))
+            .expect("验证不应报错");
+        assert_eq!(got.len(), base.len(), "{}", order.as_str());
+        for (left, right) in got.iter().zip(&base) {
+            assert_eq!(left.holds, right.holds, "{}: {}", order.as_str(), left.name);
+        }
+    }
 }

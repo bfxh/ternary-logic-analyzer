@@ -24,7 +24,12 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use trit_bdd::{BddError, premise_counterexample_bdd, satisfiable_bdd};
+pub use trit_bdd::VarOrder;
+
+use trit_bdd::{
+    BddError, order_variables, premise_counterexample_bdd, premise_counterexample_bdd_with_order,
+    satisfiable_bdd, satisfiable_bdd_with_order,
+};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::limits::{Limits, check_expr};
@@ -169,6 +174,15 @@ impl Policy {
 
     /// 逐条验证断言；任何一条失败都返回 `holds=false` 的结果，不提前中止。
     pub fn verify(&self, engine: Engine) -> Result<Vec<AssertionResult>, PolicyError> {
+        self.verify_with_bdd_order(engine, None)
+    }
+
+    /// 同 [`Policy::verify`]，但可指定 BDD 的静态变量顺序（仅 `Engine::Bdd` 生效）。
+    pub fn verify_with_bdd_order(
+        &self,
+        engine: Engine,
+        bdd_order: Option<VarOrder>,
+    ) -> Result<Vec<AssertionResult>, PolicyError> {
         if self.assertions.is_empty() {
             return Err(PolicyError::NoAssertions);
         }
@@ -194,8 +208,16 @@ impl Policy {
         let satisfiable_premise = match engine {
             Engine::Sat => satisfiable(&premise, alg, &binary)
                 .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?,
-            Engine::Bdd => satisfiable_bdd(&premise, alg, &binary)
-                .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?,
+            Engine::Bdd => {
+                let result = match bdd_order {
+                    None => satisfiable_bdd(&premise, alg, &binary),
+                    Some(order) => {
+                        let vars = order_variables(&premise, &premise, order);
+                        satisfiable_bdd_with_order(&premise, alg, &binary, &vars)
+                    }
+                };
+                result.map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?
+            }
         };
         if satisfiable_premise.is_none() {
             return Err(PolicyError::InconsistentAssumptions);
@@ -218,8 +240,16 @@ impl Policy {
                     });
                 }
                 Engine::Bdd => {
-                    let check = premise_counterexample_bdd(&premise, &expr, alg, &binary)
-                        .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
+                    let check = match bdd_order {
+                        None => premise_counterexample_bdd(&premise, &expr, alg, &binary),
+                        Some(order) => {
+                            let vars = order_variables(&premise, &expr, order);
+                            premise_counterexample_bdd_with_order(
+                                &premise, &expr, alg, &binary, &vars,
+                            )
+                        }
+                    }
+                    .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
                         holds: check.counterexample.is_none(),

@@ -1,0 +1,9 @@
+{
+  "algebra": "kleene",
+  "binary": ["infeasible", "contended"],
+  "definitions": { "reject": "infeasible | (hopeless & contended)" },
+  "assertions": [
+    { "name": "hard", "expr": "infeasible => reject" },
+    { "name": "empty", "expr": "(!contended & !infeasible) => !reject" }
+  ]
+}

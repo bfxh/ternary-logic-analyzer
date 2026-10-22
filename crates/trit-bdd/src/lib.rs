@@ -122,6 +122,21 @@ fn union_vars(a: &Expr, b: &Expr) -> Vec<String> {
     vars
 }
 
+fn merge_order(all: &[String], order: &[String]) -> Vec<String> {
+    let mut vars: Vec<String> = Vec::with_capacity(all.len());
+    for name in order {
+        if all.contains(name) && !vars.contains(name) {
+            vars.push(name.clone());
+        }
+    }
+    for name in all {
+        if !vars.contains(name) {
+            vars.push(name.clone());
+        }
+    }
+    vars
+}
+
 fn count_vars(expr: &Expr, counts: &mut HashMap<String, usize>) {
     let mut stack = vec![expr];
     while let Some(node) = stack.pop() {
@@ -535,9 +550,30 @@ pub fn satisfiable_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, BddError> {
-    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     let vars = expr.variables();
-    let enc = Encoder::new(alg, &vars, binary_vars, BddLimits::default())?;
+    satisfiable_with_vars(expr, alg, binary_vars, &vars)
+}
+
+/// 指定变量顺序的可满足性判定；缺失变量按首次出现顺序补齐。
+pub fn satisfiable_bdd_with_order(
+    expr: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    order: &[String],
+) -> Result<Option<Assignment>, BddError> {
+    let all = expr.variables();
+    let vars = merge_order(&all, order);
+    satisfiable_with_vars(expr, alg, binary_vars, &vars)
+}
+
+fn satisfiable_with_vars(
+    expr: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    vars: &[String],
+) -> Result<Option<Assignment>, BddError> {
+    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+    let enc = Encoder::new(alg, vars, binary_vars, BddLimits::default())?;
     let node = enc.encode(expr)?;
     // 必须限定在合法三值域内：非法导轨 (1,1) 可能被 table 解释成 False，再被 Not 变成 True。
     let sat = enc.guard(enc.valid()?.and(&node.t).and(&node.x.not()))?;
@@ -550,7 +586,7 @@ pub fn satisfiable_bdd(
         .ok_or(BddError::MissingWitness)?;
     Ok(Some(assignment_from_valuation(
         &enc,
-        &vars,
+        vars,
         valuation.as_vector(),
     )))
 }
@@ -571,16 +607,34 @@ pub fn premise_counterexample_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<PremiseCheck, BddError> {
+    let vars = union_vars(premise, assertion);
+    premise_with_vars(premise, assertion, alg, binary_vars, &vars)
+}
+
+/// 指定变量顺序的前提过滤查询；缺失变量按首次出现顺序补齐。
+pub fn premise_counterexample_bdd_with_order(
+    premise: &Expr,
+    assertion: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    order: &[String],
+) -> Result<PremiseCheck, BddError> {
+    let all = union_vars(premise, assertion);
+    let vars = merge_order(&all, order);
+    premise_with_vars(premise, assertion, alg, binary_vars, &vars)
+}
+
+fn premise_with_vars(
+    premise: &Expr,
+    assertion: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+    vars: &[String],
+) -> Result<PremiseCheck, BddError> {
     for expr in [premise, assertion] {
         check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
     }
-    let mut vars = premise.variables();
-    for v in assertion.variables() {
-        if !vars.contains(&v) {
-            vars.push(v);
-        }
-    }
-    let enc = Encoder::new(alg, &vars, binary_vars, BddLimits::default())?;
+    let enc = Encoder::new(alg, vars, binary_vars, BddLimits::default())?;
     let p = enc.encode(premise)?;
     let a = enc.encode(assertion)?;
     let bad = enc.guard(enc.valid()?.and(&p.t).and(&p.x.not()).and(&a.t.not()))?;
@@ -592,11 +646,7 @@ pub fn premise_counterexample_bdd(
         });
     };
     Ok(PremiseCheck {
-        counterexample: Some(assignment_from_valuation(
-            &enc,
-            &vars,
-            valuation.as_vector(),
-        )),
+        counterexample: Some(assignment_from_valuation(&enc, vars, valuation.as_vector())),
         nodes,
     })
 }
