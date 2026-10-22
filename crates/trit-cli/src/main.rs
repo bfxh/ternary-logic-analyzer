@@ -191,7 +191,7 @@ enum Commands {
         /// 引擎：sat（默认）或 bdd。
         #[arg(long, default_value = "sat")]
         engine: String,
-        /// BDD 变量排序（仅 --engine bdd）：appearance（默认）/ reverse / frequency / frequency-asc。
+        /// BDD 变量排序（仅 --engine bdd）：appearance（默认）/ reverse / frequency / frequency-asc / best。
         #[arg(long, value_name = "ORDER", default_value = "appearance")]
         bdd_order: String,
         /// BDD 单图节点预算（仅 --engine bdd；0 表示不设上限）。
@@ -836,12 +836,6 @@ fn cmd_verify(
     let Some(engine) = Engine::parse(engine) else {
         bail!("未知引擎 {engine:?}，可选 sat / bdd");
     };
-    let order = match bdd_order {
-        "appearance" => None,
-        name => {
-            Some(VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?)
-        }
-    };
     let limits = if bdd_max_nodes == 0 {
         BddLimits::UNLIMITED
     } else {
@@ -851,7 +845,36 @@ fn cmd_verify(
     };
     let policy = Policy::load(path)?;
     let assumptions = policy.assumptions.len();
-    let results = policy.verify_with_bdd_config(engine, order, limits)?;
+    let results = if bdd_order == "best" {
+        if engine != Engine::Bdd {
+            bail!("--bdd-order best 只适用于 --engine bdd");
+        }
+        let mut best: Option<(usize, Vec<trit_policy::AssertionResult>)> = None;
+        for order in [
+            VarOrder::Appearance,
+            VarOrder::Reverse,
+            VarOrder::FrequencyDesc,
+            VarOrder::FrequencyAsc,
+        ] {
+            let results = policy.verify_with_bdd_config(engine, Some(order), limits)?;
+            let score = results
+                .iter()
+                .filter_map(|result| result.nodes)
+                .sum::<usize>();
+            if best.as_ref().is_none_or(|(current, _)| score < *current) {
+                best = Some((score, results));
+            }
+        }
+        best.expect("至少尝试一种排序").1
+    } else {
+        let order = match bdd_order {
+            "appearance" => None,
+            name => Some(
+                VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?,
+            ),
+        };
+        policy.verify_with_bdd_config(engine, order, limits)?
+    };
     let failed = results.iter().filter(|r| !r.holds).count();
     if json {
         let assertions = results

@@ -451,3 +451,36 @@ fn bdd_max_nodes_is_enforced() {
     assert_ne!(code, 0, "stdout={stdout}");
     assert!(stderr.contains("BDD 节点数超过上限"), "stderr={stderr}");
 }
+
+#[test]
+fn verify_best_order_matches_appearance() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/admission.json");
+    let (stdout, stderr, code) = run(&[
+        "verify",
+        path.to_str().unwrap(),
+        "--engine",
+        "bdd",
+        "--bdd-order",
+        "best",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("OK"), "{stdout}");
+    assert!(stdout.contains("2 条断言"), "{stdout}");
+}
+
+#[test]
+fn verify_best_rejects_sat_engine() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/admission.json");
+    let (_, stderr, code) = run(&[
+        "verify",
+        path.to_str().unwrap(),
+        "--engine",
+        "sat",
+        "--bdd-order",
+        "best",
+    ]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("只适用于 --engine bdd"), "{stderr}");
+}
