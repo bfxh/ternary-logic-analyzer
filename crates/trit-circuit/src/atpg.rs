@@ -80,10 +80,12 @@ fn full_coverage_matrix(
         .map(|(index, gate)| (gate.output.name(), index))
         .collect();
     let total = 1u64 << circuit.input_count();
+    let mut simulator = crate::circuit::Simulator::new(circuit, alg).expect("调用前已校验电路");
+    let outputs = simulator.output_indices().to_vec();
     let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for mask in 0..total {
-        let inputs = circuit.decode_binary(mask);
-        let good = crate::circuit::simulate_assignment(circuit, &inputs, alg, None);
+        let values = simulator.eval_binary(mask, None);
+        let good: Vec<Ternary> = outputs.iter().map(|&index| values[index]).collect();
         let mut covers = Vec::new();
         for (index, fault) in faults.iter().enumerate() {
             if !fault.observable {
@@ -92,16 +94,12 @@ fn full_coverage_matrix(
             let Some(&gate_index) = gate_of.get(fault.gate.as_str()) else {
                 continue;
             };
-            let bad = crate::circuit::simulate_assignment(
-                circuit,
-                &inputs,
-                alg,
-                Some((gate_index, fault.input_index, fault.stuck_at)),
-            );
-            if circuit
-                .outputs
+            let bad =
+                simulator.eval_binary(mask, Some((gate_index, fault.input_index, fault.stuck_at)));
+            if outputs
                 .iter()
-                .any(|o| good.get(o.name()) != bad.get(o.name()))
+                .enumerate()
+                .any(|(slot, &signal)| bad[signal] != good[slot])
             {
                 covers.push(index);
             }

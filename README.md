@@ -229,6 +229,7 @@ python -m http.server 8765 --directory playground
 Ł3 的 `X ⊕ X = 1` 也算“确定”）。`--assign` 必须给全所有主输入，缺一个直接报错。
 
 同一套解析在库里：`trit_circuit::netlist::parse_netlist` / `to_netlist`（可往返）。
+结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`（单比特、原语 + `assign` 的 `~ & | ^`；拒绝时序/多比特）。
 格式互转：`trit netlist design.net`（text → JSON），`trit netlist design.json --from json --to text`。
 网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /
 `buf <a> <out>` / `const <0|1|X> <out>`。`examples/x_mask.net` 是 `X & 0`、`X | 1` 遮蔽的最小例子。

@@ -484,3 +484,12 @@ fn verify_best_rejects_sat_engine() {
     assert_ne!(code, 0);
     assert!(stderr.contains("只适用于 --engine bdd"), "{stderr}");
 }
+
+#[test]
+fn netlist_converts_to_verilog() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (stdout, stderr, code) = run(&["netlist", path.to_str().unwrap(), "--to", "verilog"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("module netlist"), "{stdout}");
+    assert!(stdout.contains("and g0"), "{stdout}");
+}

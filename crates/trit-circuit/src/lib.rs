@@ -3,6 +3,7 @@
 pub mod atpg;
 pub mod circuit;
 pub mod netlist;
+pub mod verilog;
 
 pub use atpg::{AtpgReport, CoverageStat, TestPattern, generate_tests};
 pub use circuit::{
@@ -10,3 +11,4 @@ pub use circuit::{
     SimulationRow, UntestableReason, analyze, analyze_faults, propagate,
 };
 pub use netlist::{NetlistError, from_json, parse_netlist, to_json, to_netlist};
+pub use verilog::{VerilogError, parse_verilog, to_verilog};

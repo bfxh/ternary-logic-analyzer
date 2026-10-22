@@ -177,10 +177,10 @@ enum Commands {
     Netlist {
         /// 输入文件。
         path: std::path::PathBuf,
-        /// 输入格式：`text`（默认）或 `json`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog`。
         #[arg(long, default_value = "text")]
         from: String,
-        /// 输出格式：`json`（默认）或 `text`。
+        /// 输出格式：`json`（默认）/ `text` / `verilog`。
         #[arg(long, default_value = "json")]
         to: String,
     },
@@ -1185,12 +1185,15 @@ fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
         }
         "json" => trit_circuit::netlist::from_json(&text)
             .with_context(|| format!("JSON 解析失败：{}", path.display()))?,
-        other => bail!("未知输入格式 {other:?}，可选 text / json"),
+        "verilog" => trit_circuit::verilog::parse_verilog(&text)
+            .with_context(|| format!("Verilog 解析失败：{}", path.display()))?,
+        other => bail!("未知输入格式 {other:?}，可选 text / json / verilog"),
     };
     match to {
         "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)),
         "json" => println!("{}", trit_circuit::netlist::to_json(&circuit)?),
-        other => bail!("未知输出格式 {other:?}，可选 text / json"),
+        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&circuit)),
+        other => bail!("未知输出格式 {other:?}，可选 json / text / verilog"),
     }
     Ok(())
 }
