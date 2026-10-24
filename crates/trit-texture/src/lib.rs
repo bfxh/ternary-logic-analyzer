@@ -1,46 +1,65 @@
 //! 三进制块纹理压缩实验层（`publish = false`，不属于稳定 API）。
 //!
-//! 格式 **TT3**：4×10 = 40 纹素的块，块头是 RGB565 端点对（4 字节），
-//! 每纹素 **1 个 trit** 索引 3 级调色板 `{e0, mid, e1}`；40 个 trit 按
-//! 5 trit/字节打包成 8 字节（**整除零浪费**）⇒ 每块 **12 字节 = 2.4 bpp**。
+//! 格式 **TT3**：**8×8 = 64 纹素**的块，块头是 RGB565 端点对（4 字节），
+//! 每纹素 **1 个 trit** 索引 3 级调色板 `{e0, mid, e1}`；64 个 trit 按
+//! 5 trit/字节打包成 13 字节 ⇒ 每块 **17 字节 = 2.125 bpp**。
 //!
 //! 对比基线（同一块结构、同一 3 级调色板，索引改 2 bit/纹素）：
-//! 40×2 bit = 10 字节 ⇒ 每块 14 字节 = 2.8 bpp。**等调色板下 trit 载荷
-//! 8 字节 < 二进制 10 字节（省 20% 载荷 / 14.3% 码率）**——这是可复算的
-//! 结论（`cargo run -p trit-texture` 打表）。显存账：4096×4096 RGBA 原图
-//! 64 MiB ⇒ TT3 约 5 MiB（12.7×），基线约 5.9 MiB。
+//! 64×2 bit = 16 字节 ⇒ 每块 20 字节 = 2.5 bpp。**等调色板下 trit 载荷
+//! 13 字节 < 二进制 16 字节（省 18.75% 载荷 / 15% 码率）**——可复算，
+//! `cargo run -p trit-texture` 打表。
 //!
-//! 三类边界如实记账（见 docs/TERNARY-BOUNDARIES.md）：
-//! - **A 原生红利**：3 级调色板的索引，1 trit（log2 3 ≈ 1.585 bit）装得下，
-//!   2 bit 装不满——块内 40 纹素取整后 8 字节 vs 10 字节（省 20% 载荷）。
-//! - **B 模拟税**：旧 4×8 块 35 槽只用 32（≈8.6% 打包粒度税），4×10 已清零；
-//!   端点被迫走 RGB565（生态格式）仍是量化税。
-//! - **C 生态路径依赖**：RGB565 端点对抄自 BC1 的生态格式，不是三进制选择。
-//! - **D 基数无关**：最近调色板色的搜索开销与进制无关，不计入任何一边。
+//! 四类边界如实记账（见 docs/TERNARY-BOUNDARIES.md）：
+//! - **A 原生红利**：3 级调色板索引 1 trit（log₂3 ≈ 1.585 bit）装得下，2 bit 装不满
+//!   ——64 纹素取整后 13 字节 vs 16 字节（省 18.75% 载荷）。
+//! - **B 模拟税**：64 纹素占 65 槽，打包粒度税 **1.6%**（v1 的 4×10 把这项清零，
+//!   却换来 25% 的 mip 补边，得不偿失）；端点被迫走 RGB565 仍是量化税。
+//! - **C 生态路径依赖**：RGB565 端点对抄自 BC1 的生态格式，不是三进制选择；
+//!   无硬件采样器是自有格式的宿命。
+//! - **D 基数无关**：最近调色板色搜索、端点优化（最小二乘精修）与进制无关。
+//!
+//! ## 块形状为什么从 4×10 改成 8×8
+//!
+//! 4×10 的唯一卖点是 40 恰被 5 整除、载荷零浪费。但 10 不是 2 的幂，而 mip 每级
+//! 高度减半仍须 %10，于是正常 2 的幂纹理必须补到 `10·2^(n-1)` 的倍数——**恒定
+//! 25% 填充**，名义 2.40 bpp 实际 3.00 bpp。8×8 付 1.6% 打包税，换来全程合法
+//! 的 mip 链与 2.125 bpp。**「零槽位浪费」是局部最优，mip 合法性才是全局最优。**
 
 #![forbid(unsafe_code)]
 
 use trit_core::value::Ternary;
 
+mod endpoints;
 pub mod ttx;
 pub mod ttx2;
 
-/// 块宽。
-pub const BLOCK_WIDTH: usize = 4;
-/// 块高：4×10 = 40 纹素——40 恰被 5 整除，trit 载荷**零槽位浪费**
-/// （8 字节 = 40 trit；旧 4×8 的 7 字节只装 35 槽用 32，8.6% 打包粒度税）。
-pub const BLOCK_HEIGHT: usize = 10;
+use endpoints::{block_endpoints, nearest_index, palette_from_endpoints, refine_endpoints};
+
+/// 块宽：**8×8 方块**（v2 起）。
+///
+/// > 教训（v1 的 4×10）：40 纹素恰被 5 整除 ⇒ 载荷 8 字节零浪费，看着很美。
+/// > 但 10 不是 2 的幂，而每个 mip 级高度都要 %10，减半后很快不合法：正常 2 的幂
+/// > 纹理（256/512/1024/2048）**没有一个**是 10 的倍数，必须补到 320/640/1280/2560
+/// > ——**恒定 25% 高度填充**。名义 2.40 bpp 实际 3.00 bpp，相对 BC1 从「省 40%」
+/// > 掉到「省 25%」。
+/// >
+/// > 取舍：2^n 永远不被 5 整除，**「零槽位浪费」与「mip 友好」不可兼得**。选后者。
+pub const BLOCK_WIDTH: usize = 8;
+/// 块高：8×8 方块，与宽相同 ⇒ 任意 2 的幂尺寸全程可 mip 到 1×1。
+pub const BLOCK_HEIGHT: usize = 8;
 /// 每块纹素数。
 pub const BLOCK_PIXELS: usize = BLOCK_WIDTH * BLOCK_HEIGHT;
 /// 每块 trit 索引数。
 pub const TRITS_PER_BLOCK: usize = BLOCK_PIXELS;
-/// trit 载荷字节数（40/5 = 8，整除零浪费；5 trit/字节 = 3^5 = 243 ≤ 256）。
+/// trit 载荷字节数：ceil(64/5) = 13（65 槽用 64，打包税 **1.6%**；5 trit/字节 = 3^5 = 243 ≤ 256）。
+///
+/// 用 1.6% 的打包税换掉 v1 的 25% mip 补边——净赚 23.4 个百分点。
 pub const TRIT_PAYLOAD_BYTES: usize = TRITS_PER_BLOCK.div_ceil(5);
-/// 块总字节数：4 字节端点 + 8 字节 trit 载荷。
+/// 块总字节数：4 字节端点 + 13 字节 trit 载荷 = 17 字节 ⇒ **2.125 bpp**。
 pub const TRIT_BLOCK_BYTES: usize = 4 + TRIT_PAYLOAD_BYTES;
-/// 二进制基线载荷字节数：40 纹素 × 2 bit = 80 bit = 10 字节。
+/// 二进制基线载荷字节数：64 纹素 × 2 bit = 128 bit = 16 字节。
 pub const BINARY_PAYLOAD_BYTES: usize = BLOCK_PIXELS * 2 / 8;
-/// 二进制基线块总字节数。
+/// 二进制基线块总字节数：4 + 16 = 20 字节 ⇒ 2.5 bpp。
 pub const BINARY_BLOCK_BYTES: usize = 4 + BINARY_PAYLOAD_BYTES;
 /// 纹素数上限（解析/分配之前拒绝）。
 pub const MAX_TEXTURE_PIXELS: usize = 1 << 22;
@@ -102,6 +121,21 @@ pub enum TextureError {
         stored: u8,
         /// 重算的校验字节。
         expected: u8,
+    },
+    /// TTX1 是 v1（4×10 / 12 字节块）的冻结格式，当前块布局已不是 v1。
+    ///
+    /// 用新布局读写 "TTX1" 会让旧文件被静默误读——按「绝不猜」的纪律显式拒绝。
+    /// v2 的纹理请走 TTX2（kind=TEX）。
+    #[error(
+        "TTX1 只支持 v1 的 4×10 / 12 字节块，当前块是 {width}×{height} / {bytes} 字节；v2 纹理请用 TTX2"
+    )]
+    TtxV1LayoutMismatch {
+        /// 当前块宽。
+        width: usize,
+        /// 当前块高。
+        height: usize,
+        /// 当前块字节数。
+        bytes: usize,
     },
     /// TTX2 的 kind 不是 0（TEX）/ 1（MOD）。
     #[error("TTX2 未知 kind：{0}")]
@@ -190,59 +224,6 @@ fn unpack_trits(bytes: &[u8; TRIT_PAYLOAD_BYTES]) -> [Ternary; TRITS_PER_BLOCK] 
     out
 }
 
-/// 3 级调色板：`[e0, mid, e1]`，8 位 RGB。
-type Palette = [(u8, u8, u8); 3];
-
-fn palette_from_endpoints(e0: u16, e1: u16) -> Palette {
-    let (r0, g0, b0) = unpack_rgb565(e0);
-    let (r1, g1, b1) = unpack_rgb565(e1);
-    let mid = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
-    [
-        (r0, g0, b0),
-        (mid(r0, r1), mid(g0, g1), mid(b0, b1)),
-        (r1, g1, b1),
-    ]
-}
-
-/// 最近调色板色；并列取**较小下标**（确定性）。
-fn nearest_index(palette: &Palette, r: u8, g: u8, b: u8) -> usize {
-    let mut best = 0usize;
-    let mut best_dist = u32::MAX;
-    for (index, (pr, pg, pb)) in palette.iter().enumerate() {
-        let dr = i32::from(r) - i32::from(*pr);
-        let dg = i32::from(g) - i32::from(*pg);
-        let db = i32::from(b) - i32::from(*pb);
-        let dist = (dr * dr + dg * dg + db * db) as u32;
-        if dist < best_dist {
-            best = index;
-            best_dist = dist;
-        }
-    }
-    best
-}
-
-/// 找块的 min/max 端点（按 RGB 字典序的逐通道 min/max），量化成 RGB565。
-fn block_endpoints(pixels: &[[u8; 4]]) -> (u16, u16) {
-    let mut min = (255u8, 255u8, 255u8);
-    let mut max = (0u8, 0u8, 0u8);
-    for pixel in pixels {
-        min = (
-            min.0.min(pixel[0]),
-            min.1.min(pixel[1]),
-            min.2.min(pixel[2]),
-        );
-        max = (
-            max.0.max(pixel[0]),
-            max.1.max(pixel[1]),
-            max.2.max(pixel[2]),
-        );
-    }
-    (
-        pack_rgb565(min.0, min.1, min.2),
-        pack_rgb565(max.0, max.1, max.2),
-    )
-}
-
 /// 一个 TT3 块：4 字节 RGB565 端点 + 7 字节 trit 载荷。
 pub type TritBlock = [u8; TRIT_BLOCK_BYTES];
 
@@ -294,9 +275,19 @@ pub fn encode_rgba(
     })
 }
 
-/// 单块编码：min/max 端点 + 每纹素最近调色板色的 trit 索引。
+/// 单块编码：min/max 端点 + 最小二乘精修，每纹素最近调色板色的 trit 索引。
 pub fn encode_block(texels: &[[u8; 4]; BLOCK_PIXELS]) -> TritBlock {
     let (e0, e1) = block_endpoints(texels);
+    encode_block_with_endpoints(texels, e0, e1)
+}
+
+/// 同 [`encode_block`]，但端点由调用方给（已做 RGB565 量化）——精修/标定入口。
+pub fn encode_block_with_endpoints(
+    texels: &[[u8; 4]; BLOCK_PIXELS],
+    e0: u16,
+    e1: u16,
+) -> TritBlock {
+    let (e0, e1) = refine_endpoints(texels, e0, e1);
     let palette = palette_from_endpoints(e0, e1);
     let mut indices = [Ternary::False; TRITS_PER_BLOCK];
     for (index, pixel) in texels.iter().enumerate() {
@@ -412,6 +403,9 @@ pub fn encode_rgba_baseline(
 }
 
 /// 单块基线编码：索引 2 bit/纹素，LSB 先行。
+///
+/// 端点走**未精修的 min/max**（与 TT3 精修前的行为一致），这样基线与 TT3 的
+/// 对比仍然只差「索引进制」这一个变量；精修带来的增益在 `encode_block` 侧。
 pub fn encode_block_baseline(texels: &[[u8; 4]; BLOCK_PIXELS]) -> [u8; BINARY_BLOCK_BYTES] {
     let (e0, e1) = block_endpoints(texels);
     let palette = palette_from_endpoints(e0, e1);
@@ -592,21 +586,11 @@ mod tests {
     }
 
     #[test]
-    fn nearest_color_breaks_ties_toward_the_lower_index() {
-        // (5,5,5) 到 e0 与 mid 距离相等：必须选下标 0（严格小于才换）。
-        let palette = [(0u8, 0u8, 0u8), (10, 10, 10), (20, 20, 20)];
-        assert_eq!(nearest_index(&palette, 5, 5, 5), 0);
-        assert_eq!(nearest_index(&palette, 4, 4, 4), 0);
-        assert_eq!(nearest_index(&palette, 6, 6, 6), 1);
-        assert_eq!(nearest_index(&palette, 19, 19, 19), 2);
-    }
-
-    #[test]
     fn texture_roundtrip_and_block_budgets_are_exact() {
-        // 4×10 纹理 = 1 块：TT3 每块 12 字节、基线每块 14 字节——这就是 A 类结论的来源
-        //（40 纹素恰被 5 整除：零槽位浪费；旧 4×8 的 7 字节载荷浪费 3 槽）。
-        let width = 4;
-        let height = 10;
+        // 8×8 块：TT3 每块 17 字节（4 端点 + 13 载荷）、基线每块 20 字节（4 + 16）
+        // ⇒ 2.125 vs 2.5 bpp。载荷 13 字节 = ceil(64/5)，打包税 1.6%。
+        let width = 8;
+        let height = 8;
         let mut pixels = vec![0u8; width * height * 4];
         for (index, byte) in pixels.iter_mut().enumerate() {
             *byte = (index % 251) as u8;
@@ -614,21 +598,57 @@ mod tests {
         let trit = encode_rgba(&pixels, width, height).unwrap();
         assert_eq!(trit.blocks.len(), 1);
         assert_eq!(trit.blocks[0].len(), TRIT_BLOCK_BYTES);
-        assert_eq!(TRIT_BLOCK_BYTES, 12);
+        assert_eq!(TRIT_BLOCK_BYTES, 17);
         let decoded = decode_rgba(&trit).unwrap();
         assert_eq!(decoded.len(), pixels.len());
 
         let baseline = encode_rgba_baseline(&pixels, width, height).unwrap();
         assert_eq!(baseline.blocks[0].len(), BINARY_BLOCK_BYTES);
-        assert_eq!(BINARY_BLOCK_BYTES, 14);
+        assert_eq!(BINARY_BLOCK_BYTES, 20);
         let decoded_baseline = decode_rgba_baseline(&baseline).unwrap();
         assert_eq!(decoded_baseline.len(), pixels.len());
-        // 两种编码的块数相同、码率差 1 字节/块（2.75 vs 3.0 bpp）。
+        // 两种编码的块数相同，每块 17 vs 20 字节（省 15% 码率）。
         assert_eq!(trit.blocks.len(), baseline.blocks.len());
-        // 每块 12 vs 14 字节：总字节比 12:14 = 6:7。
         assert_eq!(
-            7 * trit.blocks.len() * TRIT_BLOCK_BYTES,
-            6 * baseline.blocks.len() * BINARY_BLOCK_BYTES
+            20 * trit.blocks.len() * TRIT_BLOCK_BYTES,
+            17 * baseline.blocks.len() * BINARY_BLOCK_BYTES
+        );
+        // 打包税：64 trit 占 13×5 = 65 槽 ⇒ 浪费 1/65 ≈ 1.6%（不是 v1 的 20% 载荷差）。
+        assert_eq!(TRIT_PAYLOAD_BYTES * 5 - TRITS_PER_BLOCK, 1);
+    }
+
+    #[test]
+    fn block_shape_is_mip_friendly() {
+        // 回归门：块形状必须都是 2 的幂，否则 mip 链每级减半后很快不合法，
+        // 正常 2 的幂纹理就得补边（v1 的 4×10 高须 %10 ⇒ 恒定 25% 填充）。
+        //
+        // 这正是「零槽位浪费」的陷阱：40 恰被 5 整除看着很美，但 10 不是 2 的幂，
+        // 于是每级减半都失去合法性。要把这条钉死，防止有人为了省 1.6% 打包税
+        // 把块改回 4×10。
+        assert!(
+            BLOCK_WIDTH.is_power_of_two(),
+            "块宽 {BLOCK_WIDTH} 必须是 2 的幂，否则 mip 链断裂"
+        );
+        assert!(
+            BLOCK_HEIGHT.is_power_of_two(),
+            "块高 {BLOCK_HEIGHT} 必须是 2 的幂，否则 mip 链断裂"
+        );
+        // 方形块：宽高相等时任意 2 的幂纹理都能一路 mip 到 1×1。
+        assert_eq!(BLOCK_WIDTH, BLOCK_HEIGHT, "非方块会让 mip 衰减不对称");
+        // 逐级减半：从 4096 一路到**块尺寸**（8），每一级都必须是块的整数倍。
+        // 低于一个块的层级（4/2/1）在语义上就是空的——mip 链到底了，不是非法。
+        let mut side = 4096usize;
+        while side >= BLOCK_WIDTH {
+            assert!(
+                side.is_multiple_of(BLOCK_WIDTH),
+                "{side} 不是块宽 {BLOCK_WIDTH} 的倍数，该级 mip 非法"
+            );
+            side /= 2;
+        }
+        // 停下时必须恰好是「减半后不再够一个块」，而不是提前卡在某个中间层。
+        assert!(
+            side < BLOCK_WIDTH,
+            "mip 链应在块尺寸处到底，实际停在 {side}"
         );
     }
 
@@ -646,7 +666,7 @@ mod tests {
             let low = expand(raw.0);
             let high = expand(raw.1);
             // low 填满整块，texel 1 放 high：端点才恰好是这两个色。
-            let mut pixels = vec![0u8; 4 * 10 * 4];
+            let mut pixels = vec![0u8; BLOCK_WIDTH * BLOCK_HEIGHT * 4];
             for texel in 0..BLOCK_PIXELS {
                 pixels[texel * 4] = low[0];
                 pixels[texel * 4 + 1] = low[1];
@@ -657,7 +677,7 @@ mod tests {
             pixels[5] = high[1];
             pixels[6] = high[2];
             pixels[7] = 255;
-            let texture = encode_rgba_baseline(&pixels, 4, 10).unwrap();
+            let texture = encode_rgba_baseline(&pixels, BLOCK_WIDTH, BLOCK_HEIGHT).unwrap();
             assert_eq!(texture.blocks.len(), 1);
             let decoded = decode_rgba_baseline(&texture).unwrap();
             for (texel, color) in [(0, low), (1, high)] {
@@ -691,21 +711,21 @@ mod tests {
             })
         ));
         assert!(matches!(
-            encode_rgba(&[0; 16], 4, 10),
+            encode_rgba(&[0; 16], 8, 8),
             Err(TextureError::SizeMismatch {
                 actual: 16,
-                expected: 160
+                expected: 256
             })
         ));
-        let big = (MAX_TEXTURE_PIXELS + 1).next_multiple_of(BLOCK_WIDTH * BLOCK_HEIGHT);
+        let big = (MAX_TEXTURE_PIXELS + 1).next_multiple_of(BLOCK_PIXELS);
         assert!(matches!(
-            encode_rgba(&[], 4, big / 4),
+            encode_rgba(&[], BLOCK_WIDTH, big / BLOCK_WIDTH),
             Err(TextureError::TooLarge { .. })
         ));
         // 解码侧块数不符。
         let texture = TritTexture {
-            width: 4,
-            height: 10,
+            width: BLOCK_WIDTH,
+            height: BLOCK_HEIGHT,
             blocks: vec![[0u8; TRIT_BLOCK_BYTES]; 3],
         };
         assert!(matches!(
@@ -719,8 +739,8 @@ mod tests {
 
     #[test]
     fn decode_into_matches_allocating_and_rejects_short_buffers() {
-        let width = 4;
-        let height = 10;
+        let width = BLOCK_WIDTH;
+        let height = BLOCK_HEIGHT;
         let pixels: Vec<u8> = (0..width * height * 4).map(|i| (i % 251) as u8).collect();
         let texture = encode_rgba(&pixels, width, height).unwrap();
         let allocating = decode_rgba(&texture).unwrap();
