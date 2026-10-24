@@ -33,7 +33,7 @@ pub const CHECKSUM_BYTES: usize = 1;
 /// checksum 同多项式；此处就地实现（实验层互不依赖）。
 const GEN: [i32; 4] = [1, 0, 2, 1];
 
-fn gf3_remainder(trits: &[Ternary]) -> [u8; CHECKSUM_BYTES] {
+pub(crate) fn gf3_remainder(trits: &[Ternary]) -> [u8; CHECKSUM_BYTES] {
     let digit = |t: Ternary| match t {
         Ternary::False => 0i32,
         Ternary::Unknown => 1,
@@ -53,7 +53,7 @@ fn gf3_remainder(trits: &[Ternary]) -> [u8; CHECKSUM_BYTES] {
     [(r[0] * 9 + r[1] * 3 + r[2]) as u8]
 }
 
-fn block_trits(block: &[u8; TRIT_BLOCK_BYTES]) -> [Ternary; TRITS_PER_BLOCK] {
+pub(crate) fn block_trits(block: &[u8; TRIT_BLOCK_BYTES]) -> [Ternary; TRITS_PER_BLOCK] {
     let mut out = [Ternary::False; TRITS_PER_BLOCK];
     for (index, slot) in out.iter_mut().enumerate() {
         // 只取每块的索引 trit 载荷（后 8 字节 = 40 trit，基 3 打包）。

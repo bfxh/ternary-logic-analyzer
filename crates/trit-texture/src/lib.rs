@@ -23,6 +23,7 @@
 use trit_core::value::Ternary;
 
 pub mod ttx;
+pub mod ttx2;
 
 /// 块宽。
 pub const BLOCK_WIDTH: usize = 4;
@@ -101,6 +102,42 @@ pub enum TextureError {
         stored: u8,
         /// 重算的校验字节。
         expected: u8,
+    },
+    /// TTX2 的 kind 不是 0（TEX）/ 1（MOD）。
+    #[error("TTX2 未知 kind：{0}")]
+    TtxKind(u8),
+    /// TTX2 的 flags/reserved 非零（前向兼容显式拒绝，不静默猜）。
+    #[error("TTX2 flags/reserved 必须为零，实际 flags={flags} reserved={reserved}")]
+    TtxFlags {
+        /// flags 字节。
+        flags: u8,
+        /// reserved 双字节。
+        reserved: u16,
+    },
+    /// TTX2 段没有任何 mip 级 / 层。
+    #[error("TTX2 段没有任何 mip 级/层")]
+    TtxEmpty,
+    /// TTX2 的 mip 级未严格小于上一级。
+    #[error("TTX2 第 {level} 级 mip 未严格小于上一级（宽高须不增且至少一维递减）")]
+    TtxMip {
+        /// 违规的 mip 级下标。
+        level: usize,
+    },
+    /// TTX2 模型层形状不合法。
+    #[error("TTX2 第 {layer} 层形状不合法：{message}")]
+    TtxModelShape {
+        /// 层下标。
+        layer: usize,
+        /// 说明。
+        message: String,
+    },
+    /// TTX2 双轨不变式被破坏：pos 与 neg 同一字同一位同时置位。
+    #[error("TTX2 第 {layer} 层第 {word} 字 pos/neg 轨重叠")]
+    TtxRailOverlap {
+        /// 层下标。
+        layer: usize,
+        /// 字下标。
+        word: usize,
     },
 }
 

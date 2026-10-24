@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added（TTX v2：多载荷容器——GPU 纹理 mip 链 + 三值模型双轨权重，先写定位文档）
+
+- **`docs/TTX.md`**（先于实现）：TTX 对业界格式的竞争力定位——纹理侧对比
+  PNG/QOI/BC1/BC7/ETC2/ASTC/BasisU（TTX 2.40 bpp < BC1 4.0，3 色调色板天花板、
+  无硬件采样器如实记），模型侧对比 safetensors/GGUF Q2_K/BitNet b1.58
+  （双轨 2 bit/权重 < Q2_K ≈2.56，比理论下限 1.585 多付的 26% 是 B 类税），
+  特点清单 + TTX1/TTX2 字节级规范 + 转换路线。
+- **TTX2 容器**（trit-texture::ttx2，拆 `mod.rs` 容器 / `model.rs` 模型域）：
+  魔数 `TTX2` + kind（TEX/MOD）/flags（非零显式拒绝，前向兼容不猜）/段长头 +
+  kind 段 + GF(3) CRC-3 尾（对 kind 的**规范 trit 流**算，与 TTX1 同哲学）。
+- **kind=TEX**：纹理 + mip 链——每级自带宽高与块载荷，宽高不增且至少一维
+  严格递减（同级/未对齐/空链都是结构化错误）；4×10 块高的 mip 只能降 2–3 级
+  是方块格式没有的诚实约束，写进文档。读写共用 `validate_levels` 单一来源。
+- **kind=MOD**：三值模型（`TritModel`/`TritModelLayer`）——权重 {-1,0,+1} 存
+  **双轨位平面**（行整字、bit = `1<<(i%32)`），与 trit-gpu matmul 内核的
+  storage buffer 布局逐位一致（手算常量钉死），**上传零重排**；偏置基 3 打包
+  （5 trit/字节）。pos/neg 同字同位重叠 = 结构化拒绝（PR #116 的教训：非法轨
+  不许 panic 也不许静默）。层头 words_per_row 与 ceil(inputs/32) 对账。
+- 校验流覆盖**权重 + 零填充尾 + 偏置**：偏置字节打翻必被抓（测试钉住）；
+  金样字节测试（CRC 尾字节经独立 Python GF(3) 实现交叉验算）杀死任何序列化
+  漂移。v1 文件喂给 v2 读器得到显式 `TtxMagic(['T','T','X','1'])`。
+- 测试 +9（trit-texture 12 → 21）；workspace **699/0**；变异门 207 → **215**
+  （新增 8 条：mip 同级放行、打包/解轨位序错 31、字数对账用 floor、空层照收、
+  写/读侧轨重叠失明、偏置打包换基 2）。ttx2.rs 拆 mod/model 后 532/301 行，
+  模块预算零债务保持。
+
 ### Changed（CI：计费分钟削峰——macOS 门移至 main，不降覆盖）
 
 - GitHub Actions 月度配额 10 月告警 90%（1801/2000 分钟）。按 runner 计费倍率
