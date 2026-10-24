@@ -34,6 +34,10 @@ fn gpu_matmul_matches_cpu_mirror() {
         return;
     };
     assert!(report.matches, "GPU 与 CPU 镜像不一致：{report:?}");
+    assert!(
+        report.tiled_matches,
+        "分块内核与 CPU 镜像不一致：{report:?}"
+    );
     assert_eq!(report.m, m);
     assert_eq!(report.n, n);
     assert_eq!(report.k, k);

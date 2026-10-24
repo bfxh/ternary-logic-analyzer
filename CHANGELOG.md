@@ -18,6 +18,21 @@
 - **同 PR 的 `layout` 模块被设计否决剔除**（另设第二套双导轨类型 + panic 策略），
   记录见 `docs/DESIGN.md`「不批的设计提案」。外部贡献（bamboo-echo），ZCode 复审合入。
 
+### Changed（trit-gpu：矩阵乘内核升级到共享内存分块，「最优对最优」同尺）
+
+- naive 之外新增 **tiled 内核**（同 bind group、新入口点 `main_tiled`，2D dispatch）：
+  三值侧 16×16 输出 tile、每段协作装载 8-word（256 trit）A 行段 / B 列段进
+  workgroup storage——A 段被 16 个列线程复用、B 段被 16 个行线程复用；
+  f32 侧经典 16×16 SM tiling。
+- **真机读数（RTX 4060 Ti，512×4096×512）**：三值 naive 1.60 → tiled **0.183 ps/MAC**（8.8×）；
+  f32 naive 25.89 → tiled **2.641 ps/MAC**（9.8×）。**最优对最优：14.5×**
+  （naive 对 naive 是 16.2×）——分块把两边流量各砍一个量级后，比值从 16 收窄到 14.5：
+  f32 的 FMA 算力在带宽瓶颈缓解后占比上升，与「三值的红利是流量密度」自洽。
+- 正确性：tiled 与 naive 各自与 CPU 位并行镜像 `matmul_words` 逐元素一致（真机断言）。
+  开发中修掉一个真 bug：三值 tile 的装载曾写 16 宽、累加读 8 宽——相邻 chunk 的字
+  被混入（f32 的 TILE=线程数恰好无此问题；构造测试 + 随机纹理双重对拍暴露）。
+  tiled 内核在 `gpu` feature 后，默认构建变异门测不到——正确性由真机对拍钉住（如实记）。
+
 ### Added（三进制 GPU 内核研究：三值矩阵乘 + TT3 纹理解码，真机实测）
 
 trit-gpu 新增两个三进制 GPU 内核（`gpu` feature 后），全部与 CPU 镜像真机对拍：

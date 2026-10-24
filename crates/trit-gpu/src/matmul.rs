@@ -29,8 +29,14 @@ pub struct MatmulReport {
     pub matches: bool,
     /// 三值内核（双导轨 + 四组 POPC），ns / MAC。
     pub ternary_ns_per_mac: f64,
+    /// 三值分块内核（共享内存 16×16 tile / 8-word 段），ns / MAC。
+    pub ternary_tiled_ns_per_mac: f64,
     /// 同结构 f32 内核，ns / MAC。
     pub f32_ns_per_mac: f64,
+    /// f32 分块内核（经典共享内存 tiling），ns / MAC。
+    pub f32_tiled_ns_per_mac: f64,
+    /// 分块三值结果与 CPU 位并行镜像是否一致。
+    pub tiled_matches: bool,
     /// f32 相对误差（|f32−ternary| / max(1,|ternary|) 的最大值）。
     pub f32_relative_error: f64,
 }
@@ -118,6 +124,14 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
         compilation_options: Default::default(),
         cache: None,
     });
+    let pipeline_tiled = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("matmul-ternary-tiled"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("main_tiled"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
     let params: [u32; 3] = [m as u32, n as u32, words as u32];
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
@@ -181,6 +195,33 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
     let gpu = read_u32s(&device, &queue, &out, m * n)?;
     // 着色器写 i32、回读按 u32——按补码比较（|k| ≤ 100 远小于 2^31）。
     let matches = gpu
+        .iter()
+        .zip(expected.iter())
+        .all(|(g, e)| i64::from(*g as i32) == *e);
+
+    // 分块内核：同 bind group、2D dispatch（ceil(n/16), ceil(m/16)）。
+    let tiled_grid_x = (n as u32).div_ceil(16);
+    let tiled_grid_y = (m as u32).div_ceil(16);
+    let dispatch_tiled = || {
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(&pipeline_tiled);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(tiled_grid_x, tiled_grid_y, 1);
+        }
+        queue.submit([encoder.finish()]);
+    };
+    for _ in 0..20 {
+        dispatch_tiled();
+    }
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
+    let ternary_tiled_ns_per_mac = median_ns_per(&device, m * n * k, dispatch_tiled);
+    let tiled_gpu = read_u32s(&device, &queue, &out, m * n)?;
+    let tiled_matches = tiled_gpu
         .iter()
         .zip(expected.iter())
         .all(|(g, e)| i64::from(*g as i32) == *e);
@@ -278,6 +319,33 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
         .expect("poll");
     let f32_ns_per_mac = median_ns_per(&device, m * n * k, dispatch_f32);
 
+    let f32_pipeline_tiled = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("matmul-f32-tiled"),
+        layout: Some(&f32_pipeline_layout),
+        module: &f32_shader,
+        entry_point: Some("main_tiled"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let dispatch_f32_tiled = || {
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(&f32_pipeline_tiled);
+            pass.set_bind_group(0, &f32_bind, &[]);
+            pass.dispatch_workgroups(tiled_grid_x, tiled_grid_y, 1);
+        }
+        queue.submit([encoder.finish()]);
+    };
+    for _ in 0..20 {
+        dispatch_f32_tiled();
+    }
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
+    let f32_tiled_ns_per_mac = median_ns_per(&device, m * n * k, dispatch_f32_tiled);
+
     let f32_result = read_u32s(&device, &queue, &f32_out, m * n)?;
     let f32_bits: Vec<f32> = f32_result
         .iter()
@@ -300,7 +368,10 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
         k,
         matches,
         ternary_ns_per_mac,
+        ternary_tiled_ns_per_mac,
         f32_ns_per_mac,
+        f32_tiled_ns_per_mac,
+        tiled_matches,
         f32_relative_error,
     })
 }

@@ -8,3 +8,6 @@
 .DS_Store
 
 __pycache__/
+
+# 本地智能体状态（#121/#122 曾误提交，见 CHG-AJ）
+.yanagent/

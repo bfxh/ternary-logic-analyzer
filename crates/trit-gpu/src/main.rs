@@ -88,21 +88,28 @@ fn bench(trits: usize) -> Result<(), String> {
     };
     let matmul_speedup = matmul.f32_ns_per_mac / matmul.ternary_ns_per_mac;
     println!(
-        "矩阵乘（{}，{}×{}×{}，naive 一线程一输出）",
+        "矩阵乘（{}，{}×{}×{}；naive 与 tiled 同尺）",
         matmul.adapter, matmul.m, matmul.k, matmul.n
     );
     println!(
-        "  GPU 1 号（三值双导轨）{:>10.5} ps/MAC",
-        matmul.ternary_ns_per_mac * 1000.0
+        "  GPU 1 号（三值双导轨）naive {:>10.5} ps/MAC   tiled {:>10.5} ps/MAC（{:.1}×）",
+        matmul.ternary_ns_per_mac * 1000.0,
+        matmul.ternary_tiled_ns_per_mac * 1000.0,
+        matmul.ternary_ns_per_mac / matmul.ternary_tiled_ns_per_mac
     );
     println!(
-        "  GPU 2 号（二值 f32）  {:>10.5} ps/MAC",
-        matmul.f32_ns_per_mac * 1000.0
+        "  GPU 2 号（二值 f32）  naive {:>10.5} ps/MAC   tiled {:>10.5} ps/MAC（{:.1}×）",
+        matmul.f32_ns_per_mac * 1000.0,
+        matmul.f32_tiled_ns_per_mac * 1000.0,
+        matmul.f32_ns_per_mac / matmul.f32_tiled_ns_per_mac
     );
-    println!("  同设备加速（1 号 / 2 号）：{matmul_speedup:.1}×");
+    let tiled_speedup = matmul.f32_tiled_ns_per_mac / matmul.ternary_tiled_ns_per_mac;
     println!(
-        "  校验：GPU == CPU 位并行镜像：{}（f32 相对误差 {:.2e}）",
-        matmul.matches, matmul.f32_relative_error
+        "  最优对最优（tiled 2 号 / tiled 1 号）：{tiled_speedup:.1}×   naive 对 naive：{matmul_speedup:.1}×"
+    );
+    println!(
+        "  校验：naive {} / tiled {}（f32 相对误差 {:.2e}）",
+        matmul.matches, matmul.tiled_matches, matmul.f32_relative_error
     );
     Ok(())
 }
