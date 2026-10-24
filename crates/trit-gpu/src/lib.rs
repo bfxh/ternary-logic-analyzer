@@ -13,6 +13,14 @@
 //! 实测（RTX 4060 Ti / Vulkan，16M trit）：GPU 三值 **6.7 ps/trit**，同卡 f32 点积
 //! **83.9 ps/元素**（12.6×），CPU 位并行 54.4 ps/trit。1M 规模下反而 CPU 更快——
 //! dispatch 延迟占主导，GPU 要到「数据大到装不进缓存」才拉开差距。
+//!
+//! 矩阵乘内核（`matmul.rs`，naive 一线程一输出，512×4096×512）：三值双导轨
+//! **1.66 ps/MAC** vs 同结构 f32 **25.89 ps/MAC**——同设备 **15.6×**。机理：naive
+//! 内核受显存带宽支配，每 MAC 三值搬 2 bit、f32 搬 32 bit，16× 流量差兑现成 15.6×；
+//! 逐元素与 CPU 位并行镜像 [`matmul_words`] 完全一致。
+//!
+//! TT3 块纹理解码内核（`texture.rs`）与 trit-texture 的 CPU 解码逐字节对拍——
+//! WGSL 里的基 3 取位与块网格行主序映射均已真机验证。
 
 #![forbid(unsafe_code)]
 
@@ -56,6 +64,70 @@ pub fn dot_scalar(a: &[i32], b: &[i32]) -> i64 {
         .sum()
 }
 
+/// 把 `k × n` 的三值矩阵按**列**双导轨打包（得到 B 的转置行主序）。
+///
+/// GPU/CPU 矩阵乘内核都吃这个布局：`b_pos[n][w]` 是 B 第 n 列的第 w 个 32-trit 字。
+/// 零填充的尾位与 0 相与不贡献 popcount，`k` 不必是 32 的倍数。
+pub fn pack_columns(b: &[i32], k: usize, n: usize) -> (Vec<u32>, Vec<u32>) {
+    let words = k.div_ceil(TRITS_PER_WORD);
+    let mut pos = vec![0u32; n * words];
+    let mut neg = vec![0u32; n * words];
+    for col in 0..n {
+        for row in 0..k {
+            let value = b[row * n + col];
+            let bit = 1u32 << (row % TRITS_PER_WORD);
+            match value {
+                1 => pos[col * words + row / TRITS_PER_WORD] |= bit,
+                -1 => neg[col * words + row / TRITS_PER_WORD] |= bit,
+                _ => {}
+            }
+        }
+    }
+    (pos, neg)
+}
+
+/// 把 `m × k` 的三值矩阵按**行**双导轨打包（每行各自整字，行间不跨界）。
+pub fn pack_rows(a: &[i32], k: usize) -> (Vec<u32>, Vec<u32>) {
+    let mut pos = Vec::new();
+    let mut neg = Vec::new();
+    for row in a.chunks(k) {
+        let (row_pos, row_neg) = pack_dual_rail(row);
+        pos.extend_from_slice(&row_pos);
+        neg.extend_from_slice(&row_neg);
+    }
+    (pos, neg)
+}
+
+/// CPU 位并行三值矩阵乘（GPU 内核的逐位镜像）。
+///
+/// `a_*` 是 A 的行主序双导轨（m 行 × words 字），`b_*` 是 B 的**转置**行主序
+/// （n 列 × words 字，来自 [`pack_columns`]）；返回 `m × n` 行主序的 `i64`。
+/// 每个输出就是 [`dot_words`] 的一次行对行点积。
+pub fn matmul_words(
+    m: usize,
+    n: usize,
+    a_pos: &[u32],
+    a_neg: &[u32],
+    b_pos: &[u32],
+    b_neg: &[u32],
+) -> Vec<i64> {
+    let words = a_pos.len().checked_div(m).unwrap_or(0);
+    let mut out = Vec::with_capacity(m * n);
+    for row in 0..m {
+        let a_base = row * words;
+        for col in 0..n {
+            let b_base = col * words;
+            out.push(dot_words(
+                &a_pos[a_base..a_base + words],
+                &a_neg[a_base..a_base + words],
+                &b_pos[b_base..b_base + words],
+                &b_neg[b_base..b_base + words],
+            ));
+        }
+    }
+    out
+}
+
 /// 一次运行的结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Report {
@@ -91,6 +163,10 @@ pub struct Report {
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "gpu")]
+pub mod matmul;
+#[cfg(feature = "gpu")]
+pub mod texture;
 
 #[cfg(test)]
 mod tests {
@@ -130,6 +206,41 @@ mod tests {
         let (a_pos, a_neg) = pack_dual_rail(&[1, 0, 0, 0]);
         let (b_pos, b_neg) = pack_dual_rail(&[-1, 0, 0, 0]);
         assert_eq!(dot_words(&a_pos, &a_neg, &b_pos, &b_neg), -1);
+    }
+
+    #[test]
+    fn column_packing_and_matmul_match_scalar_reference() {
+        // 非整字边界（k=100 → 4 字尾 28 位零填充）+ 非方阵，边界与转置一起钉。
+        let m = 7usize;
+        let k = 100usize;
+        let n = 5usize;
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 3) as i32 - 1
+        };
+        let a: Vec<i32> = (0..m * k).map(|_| next()).collect();
+        let b: Vec<i32> = (0..k * n).map(|_| next()).collect();
+        let mut a_rows: Vec<Vec<i32>> = Vec::new();
+        for row in 0..m {
+            a_rows.push(a[row * k..(row + 1) * k].to_vec());
+        }
+        let (a_pos, a_neg) = pack_rows(&a, k);
+        let (b_pos, b_neg) = pack_columns(&b, k, n);
+        let packed = matmul_words(m, n, &a_pos, &a_neg, &b_pos, &b_neg);
+        for row in 0..m {
+            for col in 0..n {
+                let column: Vec<i32> = (0..k).map(|r| b[r * n + col]).collect();
+                let expected = dot_scalar(&a_rows[row], &column);
+                assert_eq!(
+                    packed[row * n + col],
+                    expected,
+                    "({row},{col}) 打包路径与标量参考不一致"
+                );
+            }
+        }
     }
 
     #[test]

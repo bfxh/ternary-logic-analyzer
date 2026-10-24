@@ -81,6 +81,29 @@ fn bench(trits: usize) -> Result<(), String> {
         "float_relative_error": report.float_relative_error,
     });
     println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+
+    // 矩阵乘内核：同结构 naive，唯一变量是数据表示（2 bit/trit vs f32）。
+    let Some(matmul) = trit_gpu::matmul::run(512, 4096, 512) else {
+        return Ok(());
+    };
+    let matmul_speedup = matmul.f32_ns_per_mac / matmul.ternary_ns_per_mac;
+    println!(
+        "矩阵乘（{}，{}×{}×{}，naive 一线程一输出）",
+        matmul.adapter, matmul.m, matmul.k, matmul.n
+    );
+    println!(
+        "  GPU 1 号（三值双导轨）{:>10.5} ps/MAC",
+        matmul.ternary_ns_per_mac * 1000.0
+    );
+    println!(
+        "  GPU 2 号（二值 f32）  {:>10.5} ps/MAC",
+        matmul.f32_ns_per_mac * 1000.0
+    );
+    println!("  同设备加速（1 号 / 2 号）：{matmul_speedup:.1}×");
+    println!(
+        "  校验：GPU == CPU 位并行镜像：{}（f32 相对误差 {:.2e}）",
+        matmul.matches, matmul.f32_relative_error
+    );
     Ok(())
 }
 

@@ -71,6 +71,10 @@ def check(manifest_path: Path) -> list[str]:
         for dependency in package["dependencies"]:
             if dependency.get("path") is None:
                 continue
+            # dev-dependencies 不进发布链：`cargo package` 打包时剥离 path dev-deps
+            # （2026-10-24 实证：trit-gpu dev-dep 指向 trit-texture，package rc=0）。
+            if dependency.get("kind") == "dev":
+                continue
             target = by_name.get(dependency["name"])
             if target is None:
                 failures.append(
@@ -119,7 +123,13 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def _fixture(root: Path, consumer_publish: str, dependency_publish: str, fields: bool) -> None:
+def _fixture(
+    root: Path,
+    consumer_publish: str,
+    dependency_publish: str,
+    fields: bool,
+    dep_section: str = "dependencies",
+) -> None:
     # a 是可发布方；fields=False 时故意只给它 description，用来测缺字段判红。
     extra = (
         'description = "x"\nlicense = "MIT"\nrepository = "https://example.com"'
@@ -133,7 +143,7 @@ def _fixture(root: Path, consumer_publish: str, dependency_publish: str, fields:
     _write(
         root / "a" / "Cargo.toml",
         f'[package]\nname = "a"\nversion = "0.1.0"\nedition = "2024"\n{extra}\n'
-        f'{consumer_publish}\n[dependencies]\nb = {{ path = "../b" }}\n',
+        f'{consumer_publish}\n[{dep_section}]\nb = {{ path = "../b" }}\n',
     )
     _write(root / "a" / "src" / "lib.rs", "pub fn a() {}\n")
     _write(
@@ -149,12 +159,20 @@ def self_test() -> int:
     failures = 0
     seen = 0
 
-    def run_case(name: str, consumer: str, dependency: str, fields: bool, expect_ok: bool, needle: str) -> None:
+    def run_case(
+        name: str,
+        consumer: str,
+        dependency: str,
+        fields: bool,
+        expect_ok: bool,
+        needle: str,
+        dep_section: str = "dependencies",
+    ) -> None:
         nonlocal failures, seen
         seen += 1
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _fixture(root, consumer, dependency, fields)
+            _fixture(root, consumer, dependency, fields, dep_section)
             result = subprocess.run(
                 [sys.executable, script, "--manifest-path", str(root / "Cargo.toml")],
                 stdout=subprocess.PIPE,
@@ -181,6 +199,17 @@ def self_test() -> int:
         "UNPUBLISHABLE->UNPUBLISHABLE",
     )
     run_case("red: 缺 license", "", "", False, False, "MISSING license")
+    # dev-dependencies 不进发布链（cargo package 剥离 path dev-deps，2026-10-24 实证）：
+    # 指向实验层必须绿；同形状的正式依赖仍然红（上面的用例已覆盖）。
+    run_case(
+        "green: dev-dependency -> 实验层",
+        "",
+        "publish = false",
+        True,
+        True,
+        "",
+        "dev-dependencies",
+    )
 
     print(f"self-test: {seen - failures}/{seen} passed")
     return 1 if failures else 0

@@ -1600,6 +1600,22 @@ MUTANTS = [
         "pkg": "trit-gpu",
         "filter": "packing_round_trips_across_word_boundaries"
     },
+        {
+            "name": "gpu: 列打包正负导轨互换",
+            "file": "crates/trit-gpu/src/lib.rs",
+            "old": "                1 => pos[col * words + row / TRITS_PER_WORD] |= bit,\n                -1 => neg[col * words + row / TRITS_PER_WORD] |= bit,",
+            "new": "                1 => neg[col * words + row / TRITS_PER_WORD] |= bit,\n                -1 => pos[col * words + row / TRITS_PER_WORD] |= bit,",
+            "pkg": "trit-gpu",
+            "filter": "column_packing_and_matmul_match_scalar_reference"
+    },
+        {
+            "name": "gpu: matmul 行基址按 n 步进",
+            "file": "crates/trit-gpu/src/lib.rs",
+            "old": "        let a_base = row * words;",
+            "new": "        let a_base = row * n;",
+            "pkg": "trit-gpu",
+            "filter": "column_packing_and_matmul_match_scalar_reference"
+    },
     {
         "name": "core: 取反把 X 变成 0",
         "file": "crates/trit-core/src/value.rs",

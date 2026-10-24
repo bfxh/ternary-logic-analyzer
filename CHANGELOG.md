@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added（三进制 GPU 内核研究：三值矩阵乘 + TT3 纹理解码，真机实测）
+
+trit-gpu 新增两个三进制 GPU 内核（`gpu` feature 后），全部与 CPU 镜像真机对拍：
+
+- **三值矩阵乘内核**（`matmul.wgsl` + `matmul_f32.wgsl` + `matmul.rs`）：A 行主序、
+  B 转置行主序的双导轨布局，`C[m,n]` = 四组 POPC 点积（复用 dot 内核公式）。
+  **真机读数（RTX 4060 Ti / Vulkan，512×4096×512，naive 一线程一输出）**：
+  三值 **1.66 ps/MAC** vs 同结构 f32 基线 **25.89 ps/MAC** —— **同设备 15.6×**。
+  机理：naive 内核受显存带宽支配，每 MAC 三值搬 2 bit、f32 搬 32 bit，
+  16× 流量差兑现成 15.6×（A 类：数据表示的红利）。GPU 结果与 CPU 位并行
+  镜像逐元素一致。
+- **TT3 块纹理解码内核**（`texture.wgsl` + `texture.rs`）：4×10 块、基 3 取位
+  （`byte/3^i % 3`，不是位段）、块网格行主序映射 `(x/4, y/10)`；与 trit-texture
+  的 CPU 解码在 256×60 合成纹理上**逐字节一致**（真机验证）。修掉两个真 bug：
+  基 3 打包曾被当 3-bit 位段解；块映射曾按平铺扫描序（只有 block 0 的构造
+  测试测不出——随机纹理首差 texel 4 暴露）。
+- **CPU 镜像进默认构建**（CI 可测）：`pack_columns`（B 转置列打包）、`pack_rows`
+  （A 行打包）、`matmul_words`（复用 `dot_words`）；非整字边界（k=100）+ 非方阵
+  与标量参考对拍。
+- **发布图门修正**：dev-dependencies 不进发布链——`cargo package` 打包时剥离
+  path dev-deps（实证：trit-gpu dev-dep 指向 trit-texture，package rc=0）。
+  门跳过 dev 边并新增反证例（自测 5 → 6 条全绿）。
+- 测试 +2（CPU 镜像对拍、GPU matmul 对拍含域检查）+ GPU 纹理对拍 4 条。
+  变异门 200 → **202**（新增 2 条：列打包导轨互换、matmul 行基址），trit-gpu
+  **5/5** 实跑全抓。workspace **649/0**；fmt/clippy（默认 + gpu feature）/
+  模块预算/发布图绿。真机 11 条 GPU 测试全过。
+
 ### Changed（trit-texture 提速/省显存/清税：4×10 零浪费块 + 栈数组 + into 解码）
 
 - **块 4×8 → 4×10（40 纹素）：清掉打包粒度税**。40 恰被 5 整除，trit 载荷 8 字节
