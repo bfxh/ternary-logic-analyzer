@@ -27,6 +27,9 @@ pub enum AigerError {
     /// 时序锁存器不受支持。
     #[error("暂不支持时序（L = {0}）")]
     Latches(usize),
+    /// 输入超出预算（文本字节数或头部计数与文本行数不符）。
+    #[error("AIGER 超出预算：{0}")]
+    Limit(String),
     /// 该门无法写成二值 AIGER。
     #[error("门 {0:?} 不能写成二值 AIGER")]
     Unsupported(GateKind),
@@ -34,6 +37,9 @@ pub enum AigerError {
     #[error(transparent)]
     Circuit(#[from] crate::circuit::CircuitError),
 }
+
+/// AIGER 输入字节数上限（与 Verilog/SDF 同额），在解析前拒绝超大文件。
+const MAX_AIGER_BYTES: usize = 1 << 20;
 
 fn line_error(line: usize, message: impl Into<String>) -> AigerError {
     AigerError::Line {
@@ -117,6 +123,12 @@ fn next_nonempty<'a>(lines: &'a [&'a str], index: &mut usize) -> Option<&'a str>
 
 /// 解析 AIGER ASCII 组合子集。
 pub fn parse_aiger(text: &str) -> Result<Circuit, AigerError> {
+    if text.len() > MAX_AIGER_BYTES {
+        return Err(AigerError::Limit(format!(
+            "AIGER 文本 {} 字节，超过上限 {MAX_AIGER_BYTES}",
+            text.len()
+        )));
+    }
     let lines: Vec<&str> = text.lines().collect();
     let mut index = 0usize;
     let mut header = None;
@@ -141,10 +153,26 @@ pub fn parse_aiger(text: &str) -> Result<Circuit, AigerError> {
     let latches = parse_number(parts[3], header_line, "L")?;
     let outputs = parse_number(parts[4], header_line, "O")?;
     let ands = parse_number(parts[5], header_line, "A")?;
+    // 复审 H07：头部计数在参与运算/分配**之前**先过预算——usize 相加溢出、
+    // `Vec::with_capacity(usize::MAX)` 都曾是可输入触发的 panic。
+    let declared = inputs
+        .checked_add(outputs)
+        .and_then(|total| total.checked_add(ands))
+        .ok_or_else(|| AigerError::Limit("头部计数相加溢出".to_string()))?;
+    // 每条输入/输出/AND 声明至少占一行文本；声明数超过行数必然解析不出来。
+    if declared > lines.len() {
+        return Err(AigerError::Limit(format!(
+            "头部计数 I+O+A={declared} 超过文本行数 {}",
+            lines.len()
+        )));
+    }
     if latches > 0 {
         return Err(AigerError::Latches(latches));
     }
-    if m != inputs + ands {
+    if m != inputs
+        .checked_add(ands)
+        .ok_or_else(|| AigerError::Limit("头部计数相加溢出".to_string()))?
+    {
         return Err(line_error(
             header_line,
             format!("M={m} 与 I+A={} 不一致", inputs + ands),
@@ -184,7 +212,8 @@ pub fn parse_aiger(text: &str) -> Result<Circuit, AigerError> {
         parser.circuit.add_input(Signal::new(name));
     }
 
-    let mut output_literals = Vec::with_capacity(outputs);
+    // declared ≤ lines.len() 已由上面的预算检查保证，这里不必再按头部计数预留。
+    let mut output_literals: Vec<(usize, usize)> = Vec::new();
     for _ in 0..outputs {
         let Some(text) = next_nonempty(&lines, &mut next_line) else {
             return Err(line_error(next_line, "输出声明不完整"));
@@ -465,6 +494,28 @@ mod tests {
             AigerError::Unsupported(GateKind::Xor)
         );
         assert_eq!(parse_aiger("nope").unwrap_err(), AigerError::Header);
+    }
+
+    #[test]
+    fn aiger_budget_rejects_huge_headers_and_oversized_input() {
+        // 复审 H07：头部 O 计数曾直接 Vec::with_capacity——usize::MAX 触发
+        // capacity overflow panic；I+A 相加也会溢出。现在都必须先过预算。
+        assert!(matches!(
+            parse_aiger("aig 0 0 0 18446744073709551615 0"),
+            Err(AigerError::Limit(_))
+        ));
+        assert!(matches!(
+            parse_aiger("aig 0 18446744073709551615 0 1 1"),
+            Err(AigerError::Limit(_))
+        ));
+        // 声明数超过文本行数：必然解析不出来，提前拒绝。
+        assert!(matches!(
+            parse_aiger("aig 5 1000 0 1 5\n2\n6\n8 2 4\n"),
+            Err(AigerError::Limit(_))
+        ));
+        // 文本字节上限。
+        let oversized = "aig\n".to_string() + &" ".repeat(MAX_AIGER_BYTES + 1);
+        assert!(matches!(parse_aiger(&oversized), Err(AigerError::Limit(_))));
     }
 
     #[test]

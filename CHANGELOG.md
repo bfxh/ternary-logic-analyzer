@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed（复审 P0 批次 2：AIGER 头部预算，H07 panic 封堵）
+
+- **H07**（`aiger.rs`）：头部 `O` 计数此前直接 `Vec::with_capacity(outputs)`——一行
+  `aig 0 0 0 18446744073709551615 0` 就触发 capacity overflow panic；`inputs + ands`
+  的 `usize` 相加也会溢出 panic。现在：新增 `MAX_AIGER_BYTES = 1 MiB` 字节预算（解析前）；
+  `I+O+A` 与 `I+A` 全部 `checked_add`；声明数超过文本行数提前拒绝（每条声明至少占一行，
+  超行数必然解析不出来）；`with_capacity` 移除。`AigerError` 新增 `Limit` 变体。
+- 测试 +1（四类恶意头部/超大文本全走 `Limit`）；变异门 190 → **192**（新增 2 条，
+  trit-circuit **92/92** 实跑全抓）。workspace **637/0**；fmt/clippy/模块预算绿。
+
 ### Fixed（复审 P0 批次 1：解析递归护栏，H01–H03 栈溢出封堵）
 
 全面复审（`_handoff/trit-v0.12.0-全面代码复审.md`）的三个**可远程触发的栈溢出**（隔离探针

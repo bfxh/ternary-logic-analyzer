@@ -121,6 +121,22 @@ MUTANTS = [
         "filter": "deep_parameter_expression_returns_limit_not_stack_overflow"
     },
     {
+        "name": "aiger: 文本字节预算失效",
+        "file": "crates/trit-circuit/src/aiger.rs",
+        "old": "    if text.len() > MAX_AIGER_BYTES {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "aiger_budget_rejects_huge_headers_and_oversized_input"
+    },
+    {
+        "name": "aiger: 计数对行数不校验",
+        "file": "crates/trit-circuit/src/aiger.rs",
+        "old": "    if declared > lines.len() {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "aiger_budget_rejects_huge_headers_and_oversized_input"
+    },
+    {
         "name": "circuit: 引脚故障不注入",
         "file": "crates//trit-circuit//src//circuit//sim.rs",
         "old": "                ins[pin] = value;",
