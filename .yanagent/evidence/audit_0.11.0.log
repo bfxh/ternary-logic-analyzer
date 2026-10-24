@@ -1,0 +1,13 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1350 security advisories (from C:\Users\lbx13\.cargo\advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (126 crate dependencies)
+Crate:     fxhash
+Version:   0.2.1
+Warning:   unmaintained
+Title:     fxhash - no longer maintained
+Date:      2025-09-05
+ID:        RUSTSEC-2025-0057
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0057
+
+warning: 1 allowed warning found
