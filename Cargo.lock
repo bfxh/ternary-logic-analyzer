@@ -1614,6 +1614,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-texture"
+version = "0.12.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "trit-core",
+]
+
+[[package]]
 name = "trit-wasm"
 version = "0.12.0"
 dependencies = [

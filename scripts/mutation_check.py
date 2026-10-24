@@ -161,6 +161,38 @@ MUTANTS = [
         "filter": "task_panic_fails_the_run_instead_of_hanging"
     },
     {
+        "name": "texture: trit 打包换基 2",
+        "file": "crates/trit-texture/src/lib.rs",
+        "old": "        out[byte] += (trit_digit(*value) * 3u32.pow(slot as u32)) as u8;",
+        "new": "        out[byte] += (trit_digit(*value) * 2u32.pow(slot as u32)) as u8;",
+        "pkg": "trit-texture",
+        "filter": "pack_roundtrips_all_five_trit_values"
+    },
+    {
+        "name": "texture: 调色板中点写成 1/3",
+        "file": "crates/trit-texture/src/lib.rs",
+        "old": "    let mid = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;",
+        "new": "    let mid = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 3) as u8;",
+        "pkg": "trit-texture",
+        "filter": "block_roundtrips_endpoint_colors_exactly"
+    },
+    {
+        "name": "texture: 最近色并列取大下标",
+        "file": "crates/trit-texture/src/lib.rs",
+        "old": "        if dist < best_dist {",
+        "new": "        if dist <= best_dist {",
+        "pkg": "trit-texture",
+        "filter": "nearest_color_breaks_ties_toward_the_lower_index"
+    },
+    {
+        "name": "texture: 基线位打包丢移位",
+        "file": "crates/trit-texture/src/lib.rs",
+        "old": "        payload[bit / 8] |= ((palette_index << (bit % 8)) & 0xff) as u8;",
+        "new": "        payload[bit / 8] |= (palette_index & 0xff) as u8;",
+        "pkg": "trit-texture",
+        "filter": "baseline_roundtrips_endpoint_colors_exactly"
+    },
+    {
         "name": "circuit: 引脚故障不注入",
         "file": "crates//trit-circuit//src//circuit//sim.rs",
         "old": "                ins[pin] = value;",

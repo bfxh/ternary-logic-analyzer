@@ -21,6 +21,7 @@ members = [
     "crates/trit-float",
     "crates/trit-dot",
     "crates/trit-gpu",
+    "crates/trit-texture",
 ]
 
 [workspace.package]
