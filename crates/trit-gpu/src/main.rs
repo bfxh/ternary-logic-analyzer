@@ -92,24 +92,25 @@ fn bench(trits: usize) -> Result<(), String> {
         matmul.adapter, matmul.m, matmul.k, matmul.n
     );
     println!(
-        "  GPU 1 号（三值双导轨）naive {:>10.5} ps/MAC   tiled {:>10.5} ps/MAC（{:.1}×）",
+        "  GPU 1 号（三值双导轨）naive {:>10.5}  tiled {:>10.5}  寄存器阻塞 {:>10.5} ps/MAC",
         matmul.ternary_ns_per_mac * 1000.0,
         matmul.ternary_tiled_ns_per_mac * 1000.0,
-        matmul.ternary_ns_per_mac / matmul.ternary_tiled_ns_per_mac
+        matmul.ternary_reg_ns_per_mac * 1000.0
     );
     println!(
-        "  GPU 2 号（二值 f32）  naive {:>10.5} ps/MAC   tiled {:>10.5} ps/MAC（{:.1}×）",
+        "  GPU 2 号（二值 f32）  naive {:>10.5}  tiled {:>10.5}  寄存器阻塞 {:>10.5} ps/MAC",
         matmul.f32_ns_per_mac * 1000.0,
         matmul.f32_tiled_ns_per_mac * 1000.0,
-        matmul.f32_ns_per_mac / matmul.f32_tiled_ns_per_mac
+        matmul.f32_reg_ns_per_mac * 1000.0
     );
     let tiled_speedup = matmul.f32_tiled_ns_per_mac / matmul.ternary_tiled_ns_per_mac;
+    let reg_speedup = matmul.f32_reg_ns_per_mac / matmul.ternary_reg_ns_per_mac;
     println!(
-        "  最优对最优（tiled 2 号 / tiled 1 号）：{tiled_speedup:.1}×   naive 对 naive：{matmul_speedup:.1}×"
+        "  最优对最优（寄存器阻塞 2 号 / 1 号）：{reg_speedup:.1}×（tiled 口径 {tiled_speedup:.1}×，naive 口径 {matmul_speedup:.1}×）"
     );
     println!(
-        "  校验：naive {} / tiled {}（f32 相对误差 {:.2e}）",
-        matmul.matches, matmul.tiled_matches, matmul.f32_relative_error
+        "  校验：naive {} / tiled {} / 寄存器阻塞 {}（f32 相对误差 {:.2e}）",
+        matmul.matches, matmul.tiled_matches, matmul.reg_matches, matmul.f32_relative_error
     );
     Ok(())
 }

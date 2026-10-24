@@ -100,3 +100,80 @@ fn main_tiled(
         out[row * params.n + col] = sum;
     }
 }
+
+// 寄存器阻塞版：workgroup 8×8，每线程算 2×2 共 4 个输出——共享内存里的
+// A/B 行段每次读取喂 4 个累加器（算术强度再翻倍）。tile 仍是 16×16、
+// 每段 8-word，装载由 64 线程各担 2 槽完成。
+@compute @workgroup_size(8, 8)
+fn main_tiled2(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    // 每 workgroup 覆盖一个 16×16 输出 tile：基址必须来自 workgroup 号，
+    // 不能用 global_invocation_id（那是线程号，乘 16 会让相邻组互相覆盖输出）。
+    let row_base = wg.y * 16u;
+    let col_base = wg.x * 16u;
+    let r0 = lid.y * 2u;
+    let c0 = lid.x * 2u;
+    let idx = lid.y * 8u + lid.x;
+    var s00 = 0;
+    var s01 = 0;
+    var s10 = 0;
+    var s11 = 0;
+    let word_tiles = (params.words + TILED_WORDS - 1u) / TILED_WORDS;
+    for (var chunk = 0u; chunk < word_tiles; chunk = chunk + 1u) {
+        // 64 线程各装 2 槽：槽 = r*8+w（A 按行、B 按列）。
+        let s1 = idx;
+        let s2 = idx + 64u;
+        let ar1 = s1 / 8u;
+        let aw1 = chunk * TILED_WORDS + s1 % 8u;
+        let ar2 = s2 / 8u;
+        let aw2 = chunk * TILED_WORDS + s2 % 8u;
+        tile_ap[s1] = select(0u, a_pos[(row_base + ar1) * params.words + aw1], row_base + ar1 < params.m && aw1 < params.words);
+        tile_an[s1] = select(0u, a_neg[(row_base + ar1) * params.words + aw1], row_base + ar1 < params.m && aw1 < params.words);
+        tile_ap[s2] = select(0u, a_pos[(row_base + ar2) * params.words + aw2], row_base + ar2 < params.m && aw2 < params.words);
+        tile_an[s2] = select(0u, a_neg[(row_base + ar2) * params.words + aw2], row_base + ar2 < params.m && aw2 < params.words);
+        let bc1 = col_base + (s1 / 8u);
+        let bw1 = chunk * TILED_WORDS + s1 % 8u;
+        let bc2 = col_base + (s2 / 8u);
+        let bw2 = chunk * TILED_WORDS + s2 % 8u;
+        tile_bp[s1] = select(0u, b_pos[(bc1) * params.words + bw1], bc1 < params.n && bw1 < params.words);
+        tile_bn[s1] = select(0u, b_neg[(bc1) * params.words + bw1], bc1 < params.n && bw1 < params.words);
+        tile_bp[s2] = select(0u, b_pos[(bc2) * params.words + bw2], bc2 < params.n && bw2 < params.words);
+        tile_bn[s2] = select(0u, b_neg[(bc2) * params.words + bw2], bc2 < params.n && bw2 < params.words);
+        workgroupBarrier();
+        for (var w = 0u; w < TILED_WORDS; w = w + 1u) {
+            let a0p = tile_ap[r0 * TILED_WORDS + w];
+            let a0n = tile_an[r0 * TILED_WORDS + w];
+            let a1p = tile_ap[(r0 + 1u) * TILED_WORDS + w];
+            let a1n = tile_an[(r0 + 1u) * TILED_WORDS + w];
+            let b0p = tile_bp[c0 * TILED_WORDS + w];
+            let b0n = tile_bn[c0 * TILED_WORDS + w];
+            let b1p = tile_bp[(c0 + 1u) * TILED_WORDS + w];
+            let b1n = tile_bn[(c0 + 1u) * TILED_WORDS + w];
+            s00 = s00 + i32(countOneBits(a0p & b0p)) + i32(countOneBits(a0n & b0n))
+                - i32(countOneBits(a0p & b0n)) - i32(countOneBits(a0n & b0p));
+            s01 = s01 + i32(countOneBits(a0p & b1p)) + i32(countOneBits(a0n & b1n))
+                - i32(countOneBits(a0p & b1n)) - i32(countOneBits(a0n & b1p));
+            s10 = s10 + i32(countOneBits(a1p & b0p)) + i32(countOneBits(a1n & b0n))
+                - i32(countOneBits(a1p & b0n)) - i32(countOneBits(a1n & b0p));
+            s11 = s11 + i32(countOneBits(a1p & b1p)) + i32(countOneBits(a1n & b1n))
+                - i32(countOneBits(a1p & b1n)) - i32(countOneBits(a1n & b1p));
+        }
+        workgroupBarrier();
+    }
+    let row0 = row_base + r0;
+    let col0 = col_base + c0;
+    if (row0 < params.m && col0 < params.n) {
+        out[row0 * params.n + col0] = s00;
+    }
+    if (row0 < params.m && col0 + 1u < params.n) {
+        out[row0 * params.n + col0 + 1u] = s01;
+    }
+    if (row0 + 1u < params.m && col0 < params.n) {
+        out[(row0 + 1u) * params.n + col0] = s10;
+    }
+    if (row0 + 1u < params.m && col0 + 1u < params.n) {
+        out[(row0 + 1u) * params.n + col0 + 1u] = s11;
+    }
+}

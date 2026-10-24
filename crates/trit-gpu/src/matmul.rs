@@ -37,6 +37,12 @@ pub struct MatmulReport {
     pub f32_tiled_ns_per_mac: f64,
     /// 分块三值结果与 CPU 位并行镜像是否一致。
     pub tiled_matches: bool,
+    /// 寄存器阻塞三值内核（2×2 微块），ns / MAC。
+    pub ternary_reg_ns_per_mac: f64,
+    /// 寄存器阻塞 f32 内核，ns / MAC。
+    pub f32_reg_ns_per_mac: f64,
+    /// 寄存器阻塞三值结果与 CPU 位并行镜像是否一致。
+    pub reg_matches: bool,
     /// f32 相对误差（|f32−ternary| / max(1,|ternary|) 的最大值）。
     pub f32_relative_error: f64,
 }
@@ -226,6 +232,39 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
         .zip(expected.iter())
         .all(|(g, e)| i64::from(*g as i32) == *e);
 
+    // 寄存器阻塞：workgroup 8×8、每线程 2×2 输出，grid 与 tiled 相同（每组覆盖 16×16）。
+    let pipeline_reg = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("matmul-ternary-reg"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("main_tiled2"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let dispatch_reg = || {
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(&pipeline_reg);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(tiled_grid_x, tiled_grid_y, 1);
+        }
+        queue.submit([encoder.finish()]);
+    };
+    for _ in 0..20 {
+        dispatch_reg();
+    }
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
+    let ternary_reg_ns_per_mac = median_ns_per(&device, m * n * k, dispatch_reg);
+    let reg_gpu = read_u32s(&device, &queue, &out, m * n)?;
+    let reg_matches = reg_gpu
+        .iter()
+        .zip(expected.iter())
+        .all(|(g, e)| i64::from(*g as i32) == *e);
+
     // f32 基线（同结构内核，同 m/n/k）。
     let fa: Vec<f32> = a.iter().map(|v| *v as f32).collect();
     let mut fb: Vec<f32> = Vec::with_capacity(n * k);
@@ -346,6 +385,33 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
         .expect("poll");
     let f32_tiled_ns_per_mac = median_ns_per(&device, m * n * k, dispatch_f32_tiled);
 
+    let f32_pipeline_reg = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("matmul-f32-reg"),
+        layout: Some(&f32_pipeline_layout),
+        module: &f32_shader,
+        entry_point: Some("main_tiled2"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let dispatch_f32_reg = || {
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(&f32_pipeline_reg);
+            pass.set_bind_group(0, &f32_bind, &[]);
+            pass.dispatch_workgroups(tiled_grid_x, tiled_grid_y, 1);
+        }
+        queue.submit([encoder.finish()]);
+    };
+    for _ in 0..20 {
+        dispatch_f32_reg();
+    }
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
+    let f32_reg_ns_per_mac = median_ns_per(&device, m * n * k, dispatch_f32_reg);
+
     let f32_result = read_u32s(&device, &queue, &f32_out, m * n)?;
     let f32_bits: Vec<f32> = f32_result
         .iter()
@@ -369,9 +435,12 @@ async fn run_async(m: usize, k: usize, n: usize) -> Option<MatmulReport> {
         matches,
         ternary_ns_per_mac,
         ternary_tiled_ns_per_mac,
+        ternary_reg_ns_per_mac,
         f32_ns_per_mac,
         f32_tiled_ns_per_mac,
+        f32_reg_ns_per_mac,
         tiled_matches,
+        reg_matches,
         f32_relative_error,
     })
 }

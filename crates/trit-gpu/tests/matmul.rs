@@ -6,6 +6,26 @@
 use trit_gpu::{matmul, matmul_words, pack_columns, pack_rows};
 
 #[test]
+fn gpu_reg_matmul_tiny_case() {
+    // 最小用例：m=n=k=1。A=[[+1]]、B=[[+1]] ⇒ C=[[1]]。
+    // reg 内核若在装载/累加映射上有错，1 个 MAC 就能暴露。
+    let a = vec![1i32];
+    let b = vec![1i32];
+    let (a_pos, a_neg) = pack_rows(&a, 1);
+    let (b_pos, b_neg) = pack_columns(&b, 1, 1);
+    let expected = matmul_words(1, 1, &a_pos, &a_neg, &b_pos, &b_neg);
+    assert_eq!(expected, vec![1]);
+    let report = matmul::run(1, 1, 1);
+    let Some(report) = report else {
+        eprintln!("没有可用 GPU adapter，对拍跳过");
+        return;
+    };
+    assert!(report.reg_matches, "1×1×1 reg 不一致：{report:?}");
+    assert!(report.matches);
+    assert!(report.tiled_matches);
+}
+
+#[test]
 fn gpu_matmul_matches_cpu_mirror() {
     // 非整字边界（k=100 → 4 字 + 28 位零尾）+ 非方阵，边界与转置一起钉。
     let m = 33usize;
@@ -37,6 +57,10 @@ fn gpu_matmul_matches_cpu_mirror() {
     assert!(
         report.tiled_matches,
         "分块内核与 CPU 镜像不一致：{report:?}"
+    );
+    assert!(
+        report.reg_matches,
+        "寄存器阻塞内核与 CPU 镜像不一致：{report:?}"
     );
     assert_eq!(report.m, m);
     assert_eq!(report.n, n);

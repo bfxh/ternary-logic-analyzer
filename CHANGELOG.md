@@ -18,6 +18,18 @@
 - **同 PR 的 `layout` 模块被设计否决剔除**（另设第二套双导轨类型 + panic 策略），
   记录见 `docs/DESIGN.md`「不批的设计提案」。外部贡献（bamboo-echo），ZCode 复审合入。
 
+### Changed（trit-gpu：矩阵乘加寄存器阻塞——三值再 1.6×，f32 无收益，最优对最优 21.1×）
+
+- tiled 之上新增**寄存器阻塞入口** `main_tiled2`（两侧同构）：workgroup 8×8、每线程
+  2×2 四个累加器——共享内存的 A/B 行段每次读取喂 4 个输出，算术强度再翻倍。
+- **真机读数（RTX 4060 Ti，512×4096×512）**：三值 tiled 0.208 → **0.129 ps/MAC**（再 1.6×，
+  popcount 内循环的指令级并行吃到了）；f32 tiled 2.641 → 2.712（**无收益**，FMA 已饱和、
+  occupancy 下降抵消——如实记负结果）。**最优对最优：14.5× → 21.1×**。
+- 修一个真 bug：`row_base` 曾用 `global_invocation_id × 16`（线程号！）——相邻 workgroup
+  互相覆盖输出（首差 out[0]/out[1]，真机 `reg_matches=false` 暴露）；改用 `workgroup_id`。
+- 正确性：三侧（naive/tiled/reg）各自与 CPU 镜像 `matmul_words` 逐元素一致（真机断言）。
+  reg 内核同样在 `gpu` feature 后，默认构建变异门测不到——真机对拍钉住（如实记）。
+
 ### Changed（trit-gpu：矩阵乘内核升级到共享内存分块，「最优对最优」同尺）
 
 - naive 之外新增 **tiled 内核**（同 bind group、新入口点 `main_tiled`，2D dispatch）：
