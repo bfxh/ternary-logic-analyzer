@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# 同一 PR 的新 push 立即取消旧的变异门运行（被顶掉的结果无价值）；
+# 定时/手动运行用唯一 run_id 分组，互不干扰。
+concurrency:
+  group: mutation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: true
+
 jobs:
   changed:
     name: mutation (changed crates)

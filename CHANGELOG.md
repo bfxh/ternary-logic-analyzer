@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed（CI：计费分钟削峰——macOS 门移至 main，不降覆盖）
+
+- GitHub Actions 月度配额 10 月告警 90%（1801/2000 分钟）。按 runner 计费倍率
+  （Linux 1× / Windows 2× / macOS 10×）抽样 40 次近期运行：**macOS 一个 job 占
+  计费分钟 74%**（UBUNTU=46 / WINDOWS=102 / MACOS=426），另有冷缓存单次 153 分钟离群。
+- `check` 矩阵改为按事件分流：**PR 门跑 ubuntu+windows，macOS（aarch64 信号）在
+  每次合并后的 main push 上全量跑**——每个合入 main 的提交仍被三平台验证，覆盖不减，
+  单次 PR 计费预期从 ~11-14 分钟降到 ~4-6 分钟。
+- `mutation.yml` 补并发取消组：同一 PR 的新 push 立即取消被顶掉的变异门运行
+  （此前无 concurrency 组，多 push 的 PR 每次都全额跑完）；定时/手动运行用唯一
+  run_id 分组不受影响。其余 9 个 Linux 门（module-budget/stress/publish-graph/
+  docs/action/msrv/package/wasm/release）与 PR 变异门全部保持原样。
+
 ### Added（trit-codec：量化/稀疏/交织/校验四个小编解码组件，PR #116 修后合入）
 
 - `quantize`：f32 ↔ trit 三值量化/反量化（TWN 风格，`beta=0.7` 默认，scale = max(|w|)），

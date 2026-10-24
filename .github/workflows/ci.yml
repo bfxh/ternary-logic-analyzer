@@ -24,8 +24,10 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # macOS 按 10×、Windows 按 2× 计费；PR 门跑 ubuntu+windows，
+      # macOS（aarch64 信号）在每次合并后的 main push 上全量跑，覆盖不减。
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
