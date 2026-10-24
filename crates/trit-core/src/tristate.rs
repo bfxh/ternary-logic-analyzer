@@ -176,6 +176,78 @@ pub enum BusError {
     },
 }
 
+/// 三态驱动器：使能时把 `drive` 推上总线，未使能时呈高阻。
+///
+/// 这是 [`TriStateBus`] 的使用方——一条总线挂 N 个驱动器，任一时刻至多一个
+/// 使能；`output` 是它在总线上的呈现。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TriStateDriver {
+    /// 使能（片选）；`false` = 高阻。
+    pub enable: bool,
+    /// 使能时驱动的值。
+    pub drive: TriState,
+}
+
+impl TriStateDriver {
+    /// 构造驱动器。
+    pub const fn new(enable: bool, drive: TriState) -> Self {
+        Self { enable, drive }
+    }
+
+    /// 在总线上的呈现：使能 → `drive`，未使能 → `HighZ`。
+    pub const fn output(self) -> TriState {
+        if self.enable {
+            self.drive
+        } else {
+            TriState::HighZ
+        }
+    }
+}
+
+/// 多驱动解析的逐车道冲突记录：车道号 + 该车道上所有非高阻驱动（下标, 值）。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("第 {lane} 车道有 {} 个互斥驱动", drivers.len())]
+pub struct LaneConflict {
+    /// 车道号。
+    pub lane: usize,
+    /// 该车道上所有非高阻驱动 `(驱动方下标, 值)`——至少两个才会冲突。
+    pub drivers: Vec<(usize, TriState)>,
+}
+
+/// 多驱动总线解析：`drivers[lane]` 是挂在该车道上的全部驱动器。
+///
+/// 与 [`TriStateBus::resolve`]（两个既定总线、首错即断）不同，这里一次性
+/// **收集全部冲突车道**，每条冲突列出完整的驱动方清单——复位/诊断场景需要
+/// 看到所有肇事方而不是第一个。
+pub fn resolve_drivers(drivers: &[Vec<TriStateDriver>]) -> Result<TriStateBus, Vec<LaneConflict>> {
+    let mut out = Vec::with_capacity(drivers.len());
+    let mut conflicts = Vec::new();
+    for (lane, lane_drivers) in drivers.iter().enumerate() {
+        let active: Vec<(usize, TriState)> = lane_drivers
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, d.output()))
+            .filter(|(_, v)| *v != TriState::HighZ)
+            .collect();
+        match active.len() {
+            0 => out.push(TriState::HighZ),
+            1 => out.push(active[0].1),
+            _ => {
+                conflicts.push(LaneConflict {
+                    lane,
+                    drivers: active,
+                });
+                out.push(TriState::HighZ);
+            }
+        }
+    }
+    if conflicts.is_empty() {
+        Ok(TriStateBus::new(out))
+    } else {
+        Err(conflicts)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +303,61 @@ mod tests {
         let conflict =
             TriStateBus::new(vec![TriState::Low]).resolve(&TriStateBus::new(vec![TriState::High]));
         assert!(matches!(conflict, Err(BusError::Conflict { lane: 0, .. })));
+    }
+
+    #[test]
+    fn driver_output_follows_enable() {
+        assert_eq!(
+            TriStateDriver::new(true, TriState::High).output(),
+            TriState::High
+        );
+        assert_eq!(
+            TriStateDriver::new(false, TriState::High).output(),
+            TriState::HighZ
+        );
+        // 未使能时驱动值不外泄——高阻就是高阻。
+        assert_eq!(
+            TriStateDriver::new(false, TriState::Low).output(),
+            TriState::HighZ
+        );
+    }
+
+    #[test]
+    fn resolve_drivers_collects_every_conflicting_lane() {
+        // 车道 0：两个驱动相冲；车道 1：唯一驱动；车道 2：全高阻。
+        let drivers = vec![
+            vec![
+                TriStateDriver::new(true, TriState::Low),
+                TriStateDriver::new(true, TriState::High),
+            ],
+            vec![
+                TriStateDriver::new(false, TriState::High),
+                TriStateDriver::new(true, TriState::Low),
+            ],
+            vec![TriStateDriver::new(false, TriState::Low)],
+        ];
+        let conflicts = resolve_drivers(&drivers).unwrap_err();
+        assert_eq!(conflicts.len(), 1, "只该有车道 0 冲突");
+        assert_eq!(conflicts[0].lane, 0);
+        assert_eq!(
+            conflicts[0].drivers,
+            vec![(0, TriState::Low), (1, TriState::High)]
+        );
+    }
+
+    #[test]
+    fn resolve_drivers_happy_path_high_z_and_single() {
+        let drivers = vec![
+            vec![
+                TriStateDriver::new(false, TriState::High),
+                TriStateDriver::new(false, TriState::Low),
+            ],
+            vec![TriStateDriver::new(true, TriState::High)],
+        ];
+        let bus = resolve_drivers(&drivers).unwrap();
+        assert_eq!(bus.values, vec![TriState::HighZ, TriState::High]);
+        // 全高阻车道也是合法结果。
+        let undriven = resolve_drivers(&[vec![]]).unwrap();
+        assert_eq!(undriven.values, vec![TriState::HighZ]);
     }
 }

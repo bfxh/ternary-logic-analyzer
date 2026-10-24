@@ -20,5 +20,8 @@ pub use bulk::{TriVec, TriVecError};
 pub use limits::{LimitError, Limits, check_expr, check_vars, checked_pow3};
 pub use parser::Parser;
 pub use topology::{TernaryEdge, TernaryTopology, TopologyError};
-pub use tristate::{BusError, TriState, TriStateBus, TriStateConflict};
+pub use tristate::{
+    BusError, LaneConflict, TriState, TriStateBus, TriStateConflict, TriStateDriver,
+    resolve_drivers,
+};
 pub use value::Ternary;

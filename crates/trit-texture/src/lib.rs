@@ -22,6 +22,8 @@
 
 use trit_core::value::Ternary;
 
+pub mod ttx;
+
 /// 块宽。
 pub const BLOCK_WIDTH: usize = 4;
 /// 块高：4×10 = 40 纹素——40 恰被 5 整除，trit 载荷**零槽位浪费**
@@ -74,6 +76,31 @@ pub enum TextureError {
         actual: usize,
         /// 期望块数。
         expected: usize,
+    },
+    /// TTX 魔数不是 "TTX1"。
+    #[error("TTX 魔数不符：{0:?}")]
+    TtxMagic([u8; 4]),
+    /// TTX 容器截断（不足头部/载荷/校验尾）。
+    #[error("TTX 容器只有 {actual} 字节，长度不符")]
+    TtxTruncated {
+        /// 实际字节数。
+        actual: usize,
+    },
+    /// TTX 头部声明的块数与宽高推出的块数不符。
+    #[error("TTX 声明 {declared} 块，宽高要求 {expected} 块")]
+    TtxBlockCount {
+        /// 声明的块数。
+        declared: u32,
+        /// 期望块数。
+        expected: usize,
+    },
+    /// TTX 的 GF(3) 校验和不符。
+    #[error("TTX 校验和不符：存 {stored:#04x}，算得 {expected:#04x}")]
+    TtxChecksum {
+        /// 存的校验字节。
+        stored: u8,
+        /// 重算的校验字节。
+        expected: u8,
     },
 }
 

@@ -18,6 +18,22 @@
 - **同 PR 的 `layout` 模块被设计否决剔除**（另设第二套双导轨类型 + panic 策略），
   记录见 `docs/DESIGN.md`「不批的设计提案」。外部贡献（bamboo-echo），ZCode 复审合入。
 
+### Added（三态结构体收尾 + 自有纹理容器格式 TTX）
+
+- **`TriStateDriver`**（trit-core）：三态驱动器——`enable` 时把 `drive` 推上总线、
+  未使能呈高阻。这是 TriState 故事缺的最后一块拼图（值/冲突解析/总线有了，
+  **使用方**没有）。
+- **`resolve_drivers`**（trit-core）：多驱动总线解析——`drivers[lane]` 为挂在该车道上的
+  全部驱动器，一次**收集全部冲突车道**（每条列出完整肇事方清单），与
+  `TriStateBus::resolve` 的「两个既定总线、首错即断」互补（诊断/复位场景）。
+- **自有格式 TTX**（trit-texture::ttx，TritText eXchange）：TT3 块纹理容器——
+  魔数 `TTX1` + 尺寸/块数头 + 12 字节块载荷 + **GF(3) CRC-3 校验尾**（对全部索引
+  trit 按三进制多项式 `x³+2x+1` 计算，单符号错全检——二进制容器用比特 CRC，
+  TTX 按内容自己的基数算校验，这是 A 类设计选择）。加载逐段验证：魔数/尺寸
+  对齐/块数/载荷长度/校验和，任何不一致都是结构化错误。
+- 测试 +8（trit-core 84、trit-texture 12）；workspace **690/0**；fmt/clippy/
+  模块预算/发布图绿。trit-core 新 API：`TriStateDriver`、`resolve_drivers`、`LaneConflict`。
+
 ### Changed（trit-gpu：矩阵乘加寄存器阻塞——三值再 1.6×，f32 无收益，最优对最优 21.1×）
 
 - tiled 之上新增**寄存器阻塞入口** `main_tiled2`（两侧同构）：workgroup 8×8、每线程
