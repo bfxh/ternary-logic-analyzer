@@ -1,19 +1,20 @@
 //! 三进制块纹理压缩实验层（`publish = false`，不属于稳定 API）。
 //!
-//! 格式 **TT3**：4×8 = 32 纹素的块，块头是 RGB565 端点对（4 字节），
-//! 每纹素 **1 个 trit** 索引 3 级调色板 `{e0, mid, e1}`；32 个 trit 按
-//! 5 trit/字节打包成 7 字节 ⇒ 每块 **11 字节 = 2.75 bpp**。
+//! 格式 **TT3**：4×10 = 40 纹素的块，块头是 RGB565 端点对（4 字节），
+//! 每纹素 **1 个 trit** 索引 3 级调色板 `{e0, mid, e1}`；40 个 trit 按
+//! 5 trit/字节打包成 8 字节（**整除零浪费**）⇒ 每块 **12 字节 = 2.4 bpp**。
 //!
 //! 对比基线（同一块结构、同一 3 级调色板，索引改 2 bit/纹素）：
-//! 32×2 bit = 8 字节 ⇒ 每块 12 字节 = 3.0 bpp。**等调色板下 trit 载荷
-//! 7 字节 < 二进制 8 字节（省 12.5% 载荷 / 8.3% 码率）**——这是可复算的
-//! 结论（`cargo run -p trit-texture` 打表）。
+//! 40×2 bit = 10 字节 ⇒ 每块 14 字节 = 2.8 bpp。**等调色板下 trit 载荷
+//! 8 字节 < 二进制 10 字节（省 20% 载荷 / 14.3% 码率）**——这是可复算的
+//! 结论（`cargo run -p trit-texture` 打表）。显存账：4096×4096 RGBA 原图
+//! 64 MiB ⇒ TT3 约 5 MiB（12.7×），基线约 5.9 MiB。
 //!
 //! 三类边界如实记账（见 docs/TERNARY-BOUNDARIES.md）：
 //! - **A 原生红利**：3 级调色板的索引，1 trit（log2 3 ≈ 1.585 bit）装得下，
-//!   2 bit 装不满——块内 32 纹素取整后 7 字节 vs 8 字节。
-//! - **B 模拟税**：7 字节容纳 35 个 trit 槽，只用 32，浪费 3 槽（≈8.6% 载荷
-//!   是打包粒度税）；端点被迫走 RGB565（生态格式）也是量化税。
+//!   2 bit 装不满——块内 40 纹素取整后 8 字节 vs 10 字节（省 20% 载荷）。
+//! - **B 模拟税**：旧 4×8 块 35 槽只用 32（≈8.6% 打包粒度税），4×10 已清零；
+//!   端点被迫走 RGB565（生态格式）仍是量化税。
 //! - **C 生态路径依赖**：RGB565 端点对抄自 BC1 的生态格式，不是三进制选择。
 //! - **D 基数无关**：最近调色板色的搜索开销与进制无关，不计入任何一边。
 
@@ -23,17 +24,18 @@ use trit_core::value::Ternary;
 
 /// 块宽。
 pub const BLOCK_WIDTH: usize = 4;
-/// 块高。
-pub const BLOCK_HEIGHT: usize = 8;
+/// 块高：4×10 = 40 纹素——40 恰被 5 整除，trit 载荷**零槽位浪费**
+/// （8 字节 = 40 trit；旧 4×8 的 7 字节只装 35 槽用 32，8.6% 打包粒度税）。
+pub const BLOCK_HEIGHT: usize = 10;
 /// 每块纹素数。
 pub const BLOCK_PIXELS: usize = BLOCK_WIDTH * BLOCK_HEIGHT;
 /// 每块 trit 索引数。
 pub const TRITS_PER_BLOCK: usize = BLOCK_PIXELS;
-/// trit 载荷字节数（⌈32/5⌉ = 7；5 trit/字节 = 3^5 = 243 ≤ 256）。
+/// trit 载荷字节数（40/5 = 8，整除零浪费；5 trit/字节 = 3^5 = 243 ≤ 256）。
 pub const TRIT_PAYLOAD_BYTES: usize = TRITS_PER_BLOCK.div_ceil(5);
-/// 块总字节数：4 字节端点 + 7 字节 trit 载荷。
+/// 块总字节数：4 字节端点 + 8 字节 trit 载荷。
 pub const TRIT_BLOCK_BYTES: usize = 4 + TRIT_PAYLOAD_BYTES;
-/// 二进制基线载荷字节数：32 纹素 × 2 bit = 64 bit = 8 字节。
+/// 二进制基线载荷字节数：40 纹素 × 2 bit = 80 bit = 10 字节。
 pub const BINARY_PAYLOAD_BYTES: usize = BLOCK_PIXELS * 2 / 8;
 /// 二进制基线块总字节数。
 pub const BINARY_BLOCK_BYTES: usize = 4 + BINARY_PAYLOAD_BYTES;
@@ -206,20 +208,19 @@ pub fn encode_rgba(
     for block_row in 0..block_rows {
         for block_col in 0..block_cols {
             let origin = (block_col * BLOCK_WIDTH, block_row * BLOCK_HEIGHT);
-            let texels: Vec<[u8; 4]> = (0..BLOCK_PIXELS)
-                .map(|index| {
-                    let x = origin.0 + index % BLOCK_WIDTH;
-                    let y = origin.1 + index / BLOCK_WIDTH;
-                    let offset = (y * width + x) * 4;
-                    [
-                        pixels[offset],
-                        pixels[offset + 1],
-                        pixels[offset + 2],
-                        pixels[offset + 3],
-                    ]
-                })
-                .collect();
-            blocks.push(encode_block(texels.as_slice().try_into().unwrap()));
+            let mut texels = [[0u8; 4]; BLOCK_PIXELS];
+            for (index, texel) in texels.iter_mut().enumerate() {
+                let x = origin.0 + index % BLOCK_WIDTH;
+                let y = origin.1 + index / BLOCK_WIDTH;
+                let offset = (y * width + x) * 4;
+                *texel = [
+                    pixels[offset],
+                    pixels[offset + 1],
+                    pixels[offset + 2],
+                    pixels[offset + 3],
+                ];
+            }
+            blocks.push(encode_block(&texels));
         }
     }
     Ok(TritTexture {
@@ -250,6 +251,15 @@ pub fn encode_block(texels: &[[u8; 4]; BLOCK_PIXELS]) -> TritBlock {
 
 /// 解码 TT3 回 RGBA（alpha 恒 255）。
 pub fn decode_rgba(texture: &TritTexture) -> Result<Vec<u8>, TextureError> {
+    let mut out = vec![0u8; texture.width * texture.height * 4];
+    decode_rgba_into(texture, &mut out)?;
+    Ok(out)
+}
+
+/// 解码到**调用方缓冲**：热路径复用同一份输出，免掉整图分配（显存/内存账）。
+///
+/// `out` 必须恰为 `width × height × 4` 字节；解码器不做隐式清零，逐字节覆写。
+pub fn decode_rgba_into(texture: &TritTexture, out: &mut [u8]) -> Result<(), TextureError> {
     let block_cols = texture.width / BLOCK_WIDTH;
     let block_rows = texture.height / BLOCK_HEIGHT;
     let expected = block_cols * block_rows;
@@ -259,7 +269,12 @@ pub fn decode_rgba(texture: &TritTexture) -> Result<Vec<u8>, TextureError> {
             expected,
         });
     }
-    let mut out = vec![0u8; texture.width * texture.height * 4];
+    if out.len() != texture.width * texture.height * 4 {
+        return Err(TextureError::SizeMismatch {
+            actual: out.len(),
+            expected: texture.width * texture.height * 4,
+        });
+    }
     for (block_index, block) in texture.blocks.iter().enumerate() {
         let block_col = block_index % block_cols;
         let block_row = block_index / block_cols;
@@ -284,7 +299,7 @@ pub fn decode_rgba(texture: &TritTexture) -> Result<Vec<u8>, TextureError> {
             out[offset + 3] = 255;
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// 二进制基线纹理：同一块结构、同一 3 级调色板，索引 2 bit/纹素。
@@ -310,20 +325,19 @@ pub fn encode_rgba_baseline(
     let mut blocks = Vec::with_capacity(block_cols * block_rows);
     for block_row in 0..block_rows {
         for block_col in 0..block_cols {
-            let texels: Vec<[u8; 4]> = (0..BLOCK_PIXELS)
-                .map(|index| {
-                    let x = block_col * BLOCK_WIDTH + index % BLOCK_WIDTH;
-                    let y = block_row * BLOCK_HEIGHT + index / BLOCK_WIDTH;
-                    let offset = (y * width + x) * 4;
-                    [
-                        pixels[offset],
-                        pixels[offset + 1],
-                        pixels[offset + 2],
-                        pixels[offset + 3],
-                    ]
-                })
-                .collect();
-            blocks.push(encode_block_baseline(texels.as_slice().try_into().unwrap()));
+            let mut texels = [[0u8; 4]; BLOCK_PIXELS];
+            for (index, texel) in texels.iter_mut().enumerate() {
+                let x = block_col * BLOCK_WIDTH + index % BLOCK_WIDTH;
+                let y = block_row * BLOCK_HEIGHT + index / BLOCK_WIDTH;
+                let offset = (y * width + x) * 4;
+                *texel = [
+                    pixels[offset],
+                    pixels[offset + 1],
+                    pixels[offset + 2],
+                    pixels[offset + 3],
+                ];
+            }
+            blocks.push(encode_block_baseline(&texels));
         }
     }
     Ok(BinaryTexture {
@@ -525,31 +539,32 @@ mod tests {
 
     #[test]
     fn texture_roundtrip_and_block_budgets_are_exact() {
-        // 8×8 纹理 = 2 块：TT3 每块 11 字节、基线每块 12 字节——这就是 A 类结论的来源。
-        let width = 8;
-        let height = 8;
+        // 4×10 纹理 = 1 块：TT3 每块 12 字节、基线每块 14 字节——这就是 A 类结论的来源
+        //（40 纹素恰被 5 整除：零槽位浪费；旧 4×8 的 7 字节载荷浪费 3 槽）。
+        let width = 4;
+        let height = 10;
         let mut pixels = vec![0u8; width * height * 4];
         for (index, byte) in pixels.iter_mut().enumerate() {
             *byte = (index % 251) as u8;
         }
         let trit = encode_rgba(&pixels, width, height).unwrap();
-        assert_eq!(trit.blocks.len(), 2);
+        assert_eq!(trit.blocks.len(), 1);
         assert_eq!(trit.blocks[0].len(), TRIT_BLOCK_BYTES);
-        assert_eq!(TRIT_BLOCK_BYTES, 11);
+        assert_eq!(TRIT_BLOCK_BYTES, 12);
         let decoded = decode_rgba(&trit).unwrap();
         assert_eq!(decoded.len(), pixels.len());
 
         let baseline = encode_rgba_baseline(&pixels, width, height).unwrap();
         assert_eq!(baseline.blocks[0].len(), BINARY_BLOCK_BYTES);
-        assert_eq!(BINARY_BLOCK_BYTES, 12);
+        assert_eq!(BINARY_BLOCK_BYTES, 14);
         let decoded_baseline = decode_rgba_baseline(&baseline).unwrap();
         assert_eq!(decoded_baseline.len(), pixels.len());
         // 两种编码的块数相同、码率差 1 字节/块（2.75 vs 3.0 bpp）。
         assert_eq!(trit.blocks.len(), baseline.blocks.len());
-        // 每块 11 vs 12 字节：总字节比 22:24 = 11:12。
+        // 每块 12 vs 14 字节：总字节比 12:14 = 6:7。
         assert_eq!(
-            12 * trit.blocks.len() * TRIT_BLOCK_BYTES,
-            11 * baseline.blocks.len() * BINARY_BLOCK_BYTES
+            7 * trit.blocks.len() * TRIT_BLOCK_BYTES,
+            6 * baseline.blocks.len() * BINARY_BLOCK_BYTES
         );
     }
 
@@ -567,8 +582,8 @@ mod tests {
             let low = expand(raw.0);
             let high = expand(raw.1);
             // low 填满整块，texel 1 放 high：端点才恰好是这两个色。
-            let mut pixels = vec![0u8; 4 * 8 * 4];
-            for texel in 0..32 {
+            let mut pixels = vec![0u8; 4 * 10 * 4];
+            for texel in 0..BLOCK_PIXELS {
                 pixels[texel * 4] = low[0];
                 pixels[texel * 4 + 1] = low[1];
                 pixels[texel * 4 + 2] = low[2];
@@ -578,7 +593,7 @@ mod tests {
             pixels[5] = high[1];
             pixels[6] = high[2];
             pixels[7] = 255;
-            let texture = encode_rgba_baseline(&pixels, 4, 8).unwrap();
+            let texture = encode_rgba_baseline(&pixels, 4, 10).unwrap();
             assert_eq!(texture.blocks.len(), 1);
             let decoded = decode_rgba_baseline(&texture).unwrap();
             for (texel, color) in [(0, low), (1, high)] {
@@ -612,13 +627,13 @@ mod tests {
             })
         ));
         assert!(matches!(
-            encode_rgba(&[0; 16], 4, 8),
+            encode_rgba(&[0; 16], 4, 10),
             Err(TextureError::SizeMismatch {
                 actual: 16,
-                expected: 128
+                expected: 160
             })
         ));
-        let big = (MAX_TEXTURE_PIXELS + 1).next_multiple_of(32);
+        let big = (MAX_TEXTURE_PIXELS + 1).next_multiple_of(BLOCK_WIDTH * BLOCK_HEIGHT);
         assert!(matches!(
             encode_rgba(&[], 4, big / 4),
             Err(TextureError::TooLarge { .. })
@@ -626,7 +641,7 @@ mod tests {
         // 解码侧块数不符。
         let texture = TritTexture {
             width: 4,
-            height: 8,
+            height: 10,
             blocks: vec![[0u8; TRIT_BLOCK_BYTES]; 3],
         };
         assert!(matches!(
@@ -635,6 +650,28 @@ mod tests {
                 actual: 3,
                 expected: 1
             })
+        ));
+    }
+
+    #[test]
+    fn decode_into_matches_allocating_and_rejects_short_buffers() {
+        let width = 4;
+        let height = 10;
+        let pixels: Vec<u8> = (0..width * height * 4).map(|i| (i % 251) as u8).collect();
+        let texture = encode_rgba(&pixels, width, height).unwrap();
+        let allocating = decode_rgba(&texture).unwrap();
+        let mut reused = vec![7u8; width * height * 4];
+        decode_rgba_into(&texture, &mut reused).unwrap();
+        assert_eq!(reused, allocating, "into 路径必须与分配路径逐字节一致");
+        // alpha 恒 255：两条路径共用实现，必须显式钉住通道值。
+        for texel in 0..width * height {
+            assert_eq!(reused[texel * 4 + 3], 255, "texel {texel}");
+        }
+        // 输出缓冲长度不符：显式拒绝而不是 panic。
+        let mut short = vec![0u8; width * height * 4 - 4];
+        assert!(matches!(
+            decode_rgba_into(&texture, &mut short),
+            Err(TextureError::SizeMismatch { .. })
         ));
     }
 

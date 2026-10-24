@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Changed（trit-texture 提速/省显存/清税：4×10 零浪费块 + 栈数组 + into 解码）
+
+- **块 4×8 → 4×10（40 纹素）：清掉打包粒度税**。40 恰被 5 整除，trit 载荷 8 字节
+  **零槽位浪费**（旧 4×8 的 7 字节容 35 槽只用 32，≈8.6% 税）。等调色板码率差
+  **8.3% → 14.3%**（12 vs 14 字节/块；TT3 **2.40 bpp** vs 基线 2.80 bpp），
+  合成纹理实测 PSNR 差仍为 **0.000 dB**（22.58 dB 持平）——`cargo run -p trit-texture` 可复算。
+  显存账（crate 文档）：4096×4096 RGBA 原图 64 MiB ⇒ TT3 约 5 MiB（12.7×），基线约 5.9 MiB。
+- **编码提速 27%**：`encode_rgba`/`encode_rgba_baseline` 逐块的 `Vec<[u8;4]>` 堆分配
+  （每块 128 B、4096 块/512×260 图）改**栈数组**。基准（新增 `benches/texture.rs`，
+  `cargo bench -p trit-texture`）：encode 628 → **491 µs**（**808 → 1025 MB/s**），
+  512×260 合成纹理。
+- **免分配解码**：新增 `decode_rgba_into(&texture, &mut out)`——热路径复用调用方缓冲，
+  长度不符显式报错不 panic；`decode_rgba` 改为它的分配包装。基准如实记：0.5 MiB 纹理上
+  into 仅快 ~1%（371 → 366 µs，分配成本在此规模不显著），价值在复用热路径与大图。
+- 测试 8 条（新增 into == 分配逐字节一致 + alpha 通道显式钉 255 + 短缓冲拒绝）。
+  变异门 199 → **200**（新增 into alpha 锚点，trit-texture **5/5** 实跑全抓；
+  首轮存活——两条路径共用实现导致 alpha 突变对拍不出，补通道断言后判红）。
+  workspace **648/0**；fmt/clippy/模块预算/发布图绿。
+
 ### Added（三进制块纹理压缩实验层 trit-texture）
 
 - 新 crate `trit-texture`（`publish = false`）：格式 **TT3**——4×8 = 32 纹素块，

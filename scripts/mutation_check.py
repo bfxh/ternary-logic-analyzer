@@ -192,6 +192,14 @@ MUTANTS = [
         "pkg": "trit-texture",
         "filter": "baseline_roundtrips_endpoint_colors_exactly"
     },
+        {
+                "name": "texture: into 解码 alpha 写 0",
+                "file": "crates/trit-texture/src/lib.rs",
+                "old": "                Ternary::True => 2,\n            }];\n            out[offset] = r;\n            out[offset + 1] = g;\n            out[offset + 2] = b;\n            out[offset + 3] = 255;",
+                "new": "                Ternary::True => 2,\n            }];\n            out[offset] = r;\n            out[offset + 1] = g;\n            out[offset + 2] = b;\n            out[offset + 3] = 0;",
+                "pkg": "trit-texture",
+                "filter": "decode_into_matches_allocating_and_rejects_short_buffers"
+    },
     {
         "name": "circuit: 引脚故障不注入",
         "file": "crates//trit-circuit//src//circuit//sim.rs",

@@ -7,8 +7,8 @@
 use std::time::Instant;
 
 use trit_texture::{
-    BINARY_BLOCK_BYTES, BLOCK_PIXELS, TRIT_BLOCK_BYTES, decode_rgba, decode_rgba_baseline,
-    encode_rgba, encode_rgba_baseline, psnr_rgb,
+    BINARY_BLOCK_BYTES, BLOCK_HEIGHT, BLOCK_PIXELS, BLOCK_WIDTH, TRIT_BLOCK_BYTES, decode_rgba,
+    decode_rgba_baseline, encode_rgba, encode_rgba_baseline, psnr_rgb,
 };
 
 /// 128×64 的合成纹理：水平渐变 + 竖条纹 + 少量椒盐噪点，RGBA。
@@ -46,7 +46,7 @@ fn synthetic_texture(width: usize, height: usize) -> Vec<u8> {
 
 fn main() {
     let width = 128;
-    let height = 64;
+    let height = 70;
     let pixels = synthetic_texture(width, height);
     let texels = width * height;
     let raw_bytes = texels * 4;
@@ -65,7 +65,7 @@ fn main() {
     let binary_bytes = binary.blocks.len() * BINARY_BLOCK_BYTES;
 
     println!(
-        "合成纹理 {width}×{height}（{texels} 纹素，块 = 4×8 = {BLOCK_PIXELS} 纹素，RGB565 端点对 + 3 级调色板）"
+        "合成纹理 {width}×{height}（{texels} 纹素，块 = {BLOCK_WIDTH}×{BLOCK_HEIGHT} = {BLOCK_PIXELS} 纹素，RGB565 端点对 + 3 级调色板）"
     );
     println!();
     println!(
