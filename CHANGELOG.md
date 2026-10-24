@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed（复审 P0 批次 3：trit-schedule 三件套，H04/H05/H06）
+
+- **H04 调度延期传播 O(n²)**：不动点传播（每轮全量扫描所有任务，反拓扑链每轮只推进
+  一层）改为**工作表传播 O(V+E)**——`propagate_unknown_deferrals` 抽成 `lib.rs` 的
+  `pub(crate)` helper，`schedule`/`resumable`/`resumable_threaded`/runtime 四处拷贝
+  全部收编。传播闭包与旧实现一致（`BlockedBy` 原因取标记时按声明序首个已延期前驱）。
+  10 万项反向链（旧实现 10^10 次内层访问）现在秒过。
+- **H05 runtime 资源累计溢出 panic**：`capacity = None` 不做单任务预检，两个
+  `cpu = u32::MAX` 需求并发累计曾 `checked_add(...).expect(...)` panic——毒化锁后
+  其余 worker 无法收尾、调用方挂死。改为**按任务失败处理**（`failed` + `stop` +
+  `cancel_pending` + notify），与任务失败路径同一收尾。
+- **H06 可恢复多线程执行器不接 step panic**：`task.step` 的 panic 曾直接穿透
+  worker（running/资源不归还、不 notify）→ 其余 worker 与调用方永久等待。现在
+  `catch_unwind` 包住并走 `Progress::Failed` 同一收尾路径。
+- 测试 +3：10 万项反向链（原因逐点断言 + src 正常排定）、无容量双 MAX 资源溢出
+  （确定性构造：先占满者持锁睡 100ms）、step panic 不挂死（boom 失败 + ok 完成）。
+- 变异门 192 → **195**（新增 3 条，全部选择**不产生挂起**的变异——挂起变异会把
+  变异门本身挂死；另 2 条旧锚点随重构迁移：`不传播延迟` → helper 反向边、
+  `资源占用不累计` → `new_used` 赋值）。trit-schedule **34/34** 实跑全抓；
+  workspace **640/0**；fmt/clippy/模块预算绿。
+
 ### Fixed（复审 P0 批次 2：AIGER 头部预算，H07 panic 封堵）
 
 - **H07**（`aiger.rs`）：头部 `O` 计数此前直接 `Vec::with_capacity(outputs)`——一行

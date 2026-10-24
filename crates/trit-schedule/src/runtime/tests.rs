@@ -337,4 +337,26 @@ mod metrics_export_tests {
                 .contains("trit_schedule_started 3\n")
         );
     }
+
+    #[test]
+    fn resource_overflow_without_capacity_fails_instead_of_panicking() {
+        // 复审 H05：capacity=None 不做单任务预检，两个 u32::MAX 需求并发累计
+        // 曾在 worker 里 `expect` panic——毒化锁后其余 worker 无法收尾、调用方挂死。
+        // 堆序保证 b 先被弹出；让 b 睡 100ms 持有 used=MAX，a 被第二个 worker
+        // 弹出时必然溢出（否则两者跑完 used 归零，测不到溢出分支）。
+        let b = RuntimeTask::new("b", vec![], |_| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            Ok(())
+        })
+        .with_requirements(Resources::new(u32::MAX, 0));
+        let a = RuntimeTask::new("a", vec![], |_| Ok(()))
+            .with_requirements(Resources::new(u32::MAX, 0));
+        let report = run(vec![a, b], 2, CancelToken::new()).unwrap();
+        let failure = report
+            .failed
+            .expect("资源累计溢出必须判失败而不是 panic/挂起");
+        assert_eq!(failure.task, "a", "b 先占满，a 溢出");
+        assert_eq!(failure.message, "资源累计溢出");
+        assert_eq!(report.completed, vec!["b"]);
+    }
 }

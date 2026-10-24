@@ -108,6 +108,44 @@ pub enum DeferReason {
     BlockedBy(String),
 }
 
+/// 直接未知依赖 + 沿 True 边传播到不动点——工作表传播，O(V+E)。
+///
+/// 旧实现每轮全量扫描所有任务，反拓扑长链上每轮只推进一层，O(V²)；
+/// 公开上限 100 万项时可被构造成计算型 DoS（复审 H04）。传播闭包与旧实现一致；
+/// `BlockedBy` 的原因取标记时按声明序找到的第一个已延期前驱（诊断信息）。
+pub(crate) fn propagate_unknown_deferrals(
+    true_deps: &[Vec<usize>],
+    direct_unknown: Vec<Option<String>>,
+    mut id_of: impl FnMut(usize) -> String,
+) -> Vec<Option<DeferReason>> {
+    let n = true_deps.len();
+    // 反向邻接：dependents[u] = 经 True 边依赖 u 的任务。
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (position, predecessors) in true_deps.iter().enumerate() {
+        for &predecessor in predecessors {
+            dependents[predecessor].push(position);
+        }
+    }
+    let mut deferred: Vec<Option<DeferReason>> = direct_unknown
+        .into_iter()
+        .map(|name| name.map(DeferReason::UnknownDependency))
+        .collect();
+    let mut worklist: Vec<usize> = (0..n).filter(|&index| deferred[index].is_some()).collect();
+    while let Some(source) = worklist.pop() {
+        for &position in &dependents[source] {
+            if deferred[position].is_some() {
+                continue;
+            }
+            deferred[position] = true_deps[position]
+                .iter()
+                .find(|&&predecessor| deferred[predecessor].is_some())
+                .map(|&predecessor| DeferReason::BlockedBy(id_of(predecessor)));
+            worklist.push(position);
+        }
+    }
+    deferred
+}
+
 /// 一个被延迟的任务。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeferredTask {
@@ -207,29 +245,9 @@ pub fn schedule(tasks: &[Task], workers: usize) -> Result<Schedule, ScheduleErro
     }
 
     // 直接未知 + 沿 True 边传播。
-    let mut deferred: Vec<Option<DeferReason>> = direct_unknown
-        .into_iter()
-        .map(|name| name.map(DeferReason::UnknownDependency))
-        .collect();
-    loop {
-        let mut changed = false;
-        for position in 0..n {
-            if deferred[position].is_some() {
-                continue;
-            }
-            for &predecessor in &true_deps[position] {
-                if deferred[predecessor].is_some() {
-                    deferred[position] =
-                        Some(DeferReason::BlockedBy(tasks[predecessor].id.clone()));
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let deferred = propagate_unknown_deferrals(&true_deps, direct_unknown, |position| {
+        tasks[position].id.clone()
+    });
 
     let active_count = deferred.iter().filter(|reason| reason.is_none()).count();
     let mut indegree = vec![0usize; n];
@@ -540,5 +558,48 @@ mod tests {
             report.deferred[0].reason,
             DeferReason::UnknownDependency("a".to_string())
         );
+    }
+
+    #[test]
+    fn reverse_chain_deferral_is_linear_not_quadratic() {
+        // 复审 H04：反拓扑链上旧不动点扫描每轮只推进一层，O(V²)——
+        // 10 万项反向链就是 10^10 次内层访问。工作表传播 O(V+E) 必须秒过。
+        const N: usize = 100_000;
+        let mut tasks: Vec<Task> = (0..N)
+            .map(|index| {
+                let deps = if index + 1 < N {
+                    vec![dep(&format!("t{}", index + 1), Ternary::True)]
+                } else {
+                    vec![dep("src", Ternary::Unknown)]
+                };
+                task(&format!("t{index}"), 1, deps)
+            })
+            .collect();
+        tasks.push(task("src", 1, vec![]));
+
+        let report = schedule(&tasks, 2).unwrap();
+        // 只有 src（无依赖）能排定；整条链都被延期。
+        assert_eq!(
+            report
+                .scheduled
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src"]
+        );
+        assert_eq!(report.deferred.len(), N);
+        let by_id = |name: &str| {
+            report
+                .deferred
+                .iter()
+                .find(|entry| entry.id == name)
+                .unwrap_or_else(|| panic!("{name} 未出现在 deferred"))
+        };
+        assert_eq!(
+            by_id("t99999").reason,
+            DeferReason::UnknownDependency("src".to_string())
+        );
+        assert_eq!(by_id("t0").reason, DeferReason::BlockedBy("t1".to_string()));
+        assert_eq!(by_id("t1").reason, DeferReason::BlockedBy("t2".to_string()));
     }
 }

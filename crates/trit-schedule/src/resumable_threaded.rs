@@ -5,14 +5,15 @@
 //! 运行中的 `step` 不会被强杀。
 
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex};
 
 use trit_core::value::Ternary;
 
 use crate::{
-    CancelToken, DeferReason, DeferredTask, MAX_TASKS, Progress, Resources, ResumableError,
-    ResumableReport, ResumableSpec, ResumableTask, RuntimeConfig, RuntimeMetrics, ScheduleError,
-    StepContext,
+    CancelToken, DeferredTask, MAX_TASKS, Progress, Resources, ResumableError, ResumableReport,
+    ResumableSpec, ResumableTask, RuntimeConfig, RuntimeMetrics, ScheduleError, StepContext,
+    propagate_unknown_deferrals,
 };
 
 struct Shared {
@@ -90,29 +91,9 @@ pub fn run_resumable_threaded(
             }
         }
     }
-    let mut deferred: Vec<Option<DeferReason>> = direct_unknown
-        .into_iter()
-        .map(|name| name.map(DeferReason::UnknownDependency))
-        .collect();
-    loop {
-        let mut changed = false;
-        for position in 0..n {
-            if deferred[position].is_some() {
-                continue;
-            }
-            for &predecessor in &true_deps[position] {
-                if deferred[predecessor].is_some() {
-                    deferred[position] =
-                        Some(DeferReason::BlockedBy(specs[predecessor].id.clone()));
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let deferred = propagate_unknown_deferrals(&true_deps, direct_unknown, |position| {
+        specs[position].id.clone()
+    });
     let active_count = deferred.iter().filter(|reason| reason.is_none()).count();
     if let Some(capacity) = capacity {
         for position in 0..n {
@@ -373,7 +354,11 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
             cancel: cancel.clone(),
         };
         loop {
-            let progress = task.step(&ctx);
+            // 复审 H06：`task.step` 的 panic 曾直接穿透 worker——running/资源
+            // 不归还、不 notify，其余 worker 与调用方永久等待。包住并走与
+            // `Progress::Failed` 相同的收尾路径（归还、置 failed、stop、notify）。
+            let progress = catch_unwind(AssertUnwindSafe(|| task.step(&ctx)))
+                .unwrap_or_else(|_| Progress::Failed("任务 panic".to_string()));
             state = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             state.steps += 1;
             match progress {
@@ -590,5 +575,35 @@ mod tests {
         assert_eq!(report.cancelled, vec!["a"]);
         assert_eq!(report.metrics.started, 0);
         assert_eq!(report.metrics.cancelled, 1);
+    }
+
+    #[test]
+    fn task_panic_fails_the_run_instead_of_hanging() {
+        // 复审 H06：`step` 的 panic 曾直接穿透 worker——running/资源不归还、
+        // 不 notify，其余 worker 与调用方永久等待。现在必须走 Failed 收尾：
+        // 归还计数、置 failed、stop、cancel pending、notify_all。
+        struct Boom;
+        impl ResumableTask for Boom {
+            fn step(&mut self, _ctx: &StepContext) -> Progress {
+                panic!("boom");
+            }
+        }
+
+        let report = run_resumable_threaded(
+            vec![
+                ResumableSpec::new("boom", vec![], Boom),
+                ResumableSpec::new("ok", vec![], Counter::new(1)),
+            ],
+            RuntimeConfig::new(2),
+            CancelToken::new(),
+        )
+        .unwrap();
+        let (id, message) = report
+            .failed
+            .clone()
+            .expect("panic 任务必须记为失败而不是挂死");
+        assert_eq!(id, "boom");
+        assert_eq!(message, "任务 panic");
+        assert!(report.completed.contains(&"ok".to_string()), "{report:?}");
     }
 }

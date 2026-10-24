@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use trit_core::value::Ternary;
 
 use crate::{
-    CancelToken, DeferReason, DeferredTask, Dependency, MAX_TASKS, Resources, RuntimeConfig,
-    RuntimeMetrics, ScheduleError,
+    CancelToken, DeferredTask, Dependency, MAX_TASKS, Resources, RuntimeConfig, RuntimeMetrics,
+    ScheduleError, propagate_unknown_deferrals,
 };
 
 /// 一次 step 的结果。
@@ -181,29 +181,9 @@ pub fn run_resumable(
         }
     }
 
-    let mut deferred: Vec<Option<DeferReason>> = direct_unknown
-        .into_iter()
-        .map(|name| name.map(DeferReason::UnknownDependency))
-        .collect();
-    loop {
-        let mut changed = false;
-        for position in 0..n {
-            if deferred[position].is_some() {
-                continue;
-            }
-            for &predecessor in &true_deps[position] {
-                if deferred[predecessor].is_some() {
-                    deferred[position] =
-                        Some(DeferReason::BlockedBy(specs[predecessor].id.clone()));
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let deferred = propagate_unknown_deferrals(&true_deps, direct_unknown, |position| {
+        specs[position].id.clone()
+    });
     let active_count = deferred.iter().filter(|reason| reason.is_none()).count();
     if let Some(capacity) = capacity {
         for position in 0..n {

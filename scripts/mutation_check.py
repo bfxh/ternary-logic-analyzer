@@ -137,6 +137,30 @@ MUTANTS = [
         "filter": "aiger_budget_rejects_huge_headers_and_oversized_input"
     },
     {
+        "name": "schedule: 未知传播回退全量扫描",
+        "file": "crates/trit-schedule/src/lib.rs",
+        "old": "    let mut worklist: Vec<usize> = (0..n).filter(|&index| deferred[index].is_some()).collect();",
+        "new": "    let mut worklist: Vec<usize> = Vec::new();",
+        "pkg": "trit-schedule",
+        "filter": "reverse_chain_deferral_is_linear_not_quadratic"
+    },
+    {
+        "name": "schedule: 资源溢出改记空消息",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
+        "old": '                    message: "资源累计溢出".to_string(),',
+        "new": "                    message: String::new(),",
+        "pkg": "trit-schedule",
+        "filter": "resource_overflow_without_capacity_fails_instead_of_panicking"
+    },
+    {
+        "name": "schedule: step panic 记成完成",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": '            let progress = catch_unwind(AssertUnwindSafe(|| task.step(&ctx)))\n                .unwrap_or_else(|_| Progress::Failed("任务 panic".to_string()));',
+        "new": '            let progress = catch_unwind(AssertUnwindSafe(|| task.step(&ctx)))\n                .unwrap_or_else(|_| Progress::Done);',
+        "pkg": "trit-schedule",
+        "filter": "task_panic_fails_the_run_instead_of_hanging"
+    },
+    {
         "name": "circuit: 引脚故障不注入",
         "file": "crates//trit-circuit//src//circuit//sim.rs",
         "old": "                ins[pin] = value;",
@@ -851,8 +875,8 @@ MUTANTS = [
     {
         "name": "schedule: 不传播延迟",
         "file": "crates/trit-schedule/src/lib.rs",
-        "old": "            for &predecessor in &true_deps[position] {\n                if deferred[predecessor].is_some() {\n                    deferred[position] =\n                        Some(DeferReason::BlockedBy(tasks[predecessor].id.clone()));\n                    changed = true;\n                    break;\n                }\n            }\n",
-        "new": "            for &predecessor in &true_deps[position] {\n                if false {\n                    deferred[position] =\n                        Some(DeferReason::BlockedBy(tasks[predecessor].id.clone()));\n                    changed = true;\n                    break;\n                }\n            }\n",
+        "old": "        for &predecessor in predecessors {\n            dependents[predecessor].push(position);",
+        "new": "            let _ = position;",
         "pkg": "trit-schedule",
         "filter": "unknown_dependency_defers_transitively"
     },
@@ -907,8 +931,8 @@ MUTANTS = [
     {
         "name": "runtime: 资源占用不累计",
         "file": "crates/trit-schedule/src/runtime/execute.rs",
-        "old": "            state.used = state\n                .used\n                .checked_add(requirements)\n                .expect(\"预检保证资源相加不溢出\");\n",
-        "new": "            state.used = requirements;\n",
+        "old": "            state.running += 1;\n            state.started += 1;\n            state.used = new_used;",
+        "new": "            state.running += 1;\n            state.started += 1;\n            state.used = requirements;",
         "pkg": "trit-schedule",
         "filter": "quota_accumulates_across_tasks"
     },

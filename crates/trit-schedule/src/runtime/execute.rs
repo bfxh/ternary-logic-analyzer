@@ -4,7 +4,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use trit_core::value::Ternary;
 
-use crate::{DeferReason, DeferredTask, MAX_TASKS, ScheduleError};
+use crate::{DeferredTask, MAX_TASKS, ScheduleError, propagate_unknown_deferrals};
 
 use super::types::{
     CancelToken, Job, Resources, RuntimeConfig, RuntimeError, RuntimeMetrics, RuntimeReport,
@@ -99,29 +99,9 @@ pub fn run_with_config(
         }
     }
 
-    let mut deferred: Vec<Option<DeferReason>> = direct_unknown
-        .into_iter()
-        .map(|name| name.map(DeferReason::UnknownDependency))
-        .collect();
-    loop {
-        let mut changed = false;
-        for position in 0..n {
-            if deferred[position].is_some() {
-                continue;
-            }
-            for &predecessor in &true_deps[position] {
-                if deferred[predecessor].is_some() {
-                    deferred[position] =
-                        Some(DeferReason::BlockedBy(tasks[predecessor].id.clone()));
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let deferred = propagate_unknown_deferrals(&true_deps, direct_unknown, |position| {
+        tasks[position].id.clone()
+    });
     let active_count = deferred.iter().filter(|reason| reason.is_none()).count();
     if let Some(capacity) = capacity {
         for position in 0..n {
@@ -323,13 +303,23 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
             let Some(run) = state.jobs[position].take() else {
                 continue;
             };
+            // 复审 H05：`capacity = None` 时不做单任务预检，两个 u32::MAX 需求并发
+            // 累计仍会溢出——不能用 `expect`（worker panic 毒化锁后其余 worker
+            // 无法可靠收尾）。溢出按任务失败处理：停止本轮并通知所有 worker。
+            let requirements = state.requirements[position];
+            let Some(new_used) = state.used.checked_add(requirements) else {
+                state.failed = Some(TaskFailure {
+                    task: id,
+                    message: "资源累计溢出".to_string(),
+                });
+                state.stop = true;
+                state.cancel_pending();
+                ready_cv.notify_all();
+                continue;
+            };
             state.running += 1;
             state.started += 1;
-            let requirements = state.requirements[position];
-            state.used = state
-                .used
-                .checked_add(requirements)
-                .expect("预检保证资源相加不溢出");
+            state.used = new_used;
             state.peak = state.peak.max(state.used);
             drop(state);
 
