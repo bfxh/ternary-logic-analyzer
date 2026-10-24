@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added（trit-codec：游程/差分/格雷/QM 化简/#SAT 五个小编解码组件）
+
+又一批独立小编解码器（每个一个文件、只依赖 trit-core、`forbid(unsafe_code)`）：
+
+- `rle`：三值游程编码，连续相同 trit 压成 `(value, count)` 对，可逆；
+  两遍法解码（先校验 `count==0` 与总长再分配），垃圾 `expected_len` 不再 OOM-panic；
+  超长游程 saturating。
+- `delta`：三值差分编码，`d[i]=(t[i]-t[i-1]) mod 3`（signed i8 `rem_euclid(3)`，无下溢），
+  适合缓变序列；穷举长度 ≤6 的全部 1093 条序列 + 2 万长序列往返钉死。
+- `gray`：三值反射格雷码，n 个 trit 表 3ⁿ 个状态、相邻 index 码字恰差一位
+  （n=2/3 穷举汉明距离==1 + k=0 全 False 锚点）；decode 改 checked Horner 累加，
+  超长码字饱和不 panic。
+- `sop`：三值 Quine-McCluskey 化简（真值表 → 最简积之和，`Unknown`=wildcard）；
+  修掉两处真缺陷——合并 parents 标记遗漏导致非质蕴含残留、以及非盒并真值表的
+  **静默过覆盖**（现在末尾枚举 3ⁿ 精确校验，不可表示的输入返回结构化错误）；
+  300+150 个随机盒并真值表等价性测试。
+- `count`：三值 #SAT，容斥数 SOP 积项在 3ⁿ 立方体里的覆盖并集；
+  修掉两处真 bug——`1u64 << m` 在 m≥64 panic、3^w 溢出被静默截断成错误答案
+  （现在 n>40 / m>63 显式报错）；与 `sop` 三条交叉验证（含重叠质蕴含 3+3−1=5）。
+- CLI 新增 rle / delta / gray / sop / count 子命令（5 个端到端测试）。
+- 测试：codec lib 66 → **110**（+44），cli 9 → **14**。外部贡献（bamboo-echo），
+  五路并行独立审查（worktree 隔离），clippy `-D warnings` 零警告。
+
 ### Added（trit-codec：量化/稀疏/交织/校验四个小编解码组件，PR #116 修后合入）
 
 - `quantize`：f32 ↔ trit 三值量化/反量化（TWN 风格，`beta=0.7` 默认，scale = max(|w|)），
